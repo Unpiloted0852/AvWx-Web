@@ -1,0 +1,55 @@
+name: Update Weather Data
+
+on:
+  # 1. Allow cron-job.org to trigger this
+  repository_dispatch:
+    types: [trigger-weather-update]
+  # 2. Internal backup timer (5 minutes)
+  schedule:
+    - cron: '*/5 * * * *'
+  # 3. Manual button
+  workflow_dispatch:
+
+jobs:
+  download-and-commit:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v3
+
+      - name: Create data directory
+        run: mkdir -p data
+
+      - name: Download Weather Files
+        run: |
+          # Core Weather Data
+          curl -L -o data/tafs.cache.xml.gz "https://aviationweather.gov/data/cache/tafs.cache.xml.gz"
+          curl -L -o data/metars.cache.xml.gz "https://aviationweather.gov/data/cache/metars.cache.xml.gz"
+          curl -L -o data/stations.cache.xml.gz "https://aviationweather.gov/data/cache/stations.cache.xml.gz"
+          curl -L -o data/aircraftreports.cache.xml.gz "https://aviationweather.gov/data/cache/aircraftreports.cache.xml.gz"
+          curl -L -o data/runways.csv "https://raw.githubusercontent.com/davidmegginson/ourairports-data/main/runways.csv"
+          
+          # Hazards / SIGMETs
+          curl -L -o data/sigmet_domestic.json "https://aviationweather.gov/api/data/sigmet?format=geojson"
+          curl -L -o data/sigmet_intl.json "https://aviationweather.gov/api/data/isigmet?format=geojson"
+
+      - name: Commit and Push
+        run: |
+          git config user.name "Weather Bot"
+          git config user.email "actions@github.com"
+          git add data/*
+          
+          # Check if there are changes to commit
+          if git diff --staged --quiet; then
+            echo "No changes to weather data. Skipping commit."
+            exit 0
+          fi
+          
+          git commit -m "Update weather data"
+          
+          # THE FIX: Pull remote changes (like your index.html edits) before pushing
+          git pull --rebase origin main
+          
+          git push
