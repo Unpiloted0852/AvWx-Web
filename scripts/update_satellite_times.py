@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Writes data/satellite_times.json: the newest GeoColor image times on CIRA's SLIDER.
+"""Writes data/satellite_times.json: the newest image times on CIRA's SLIDER.
 
 The map's satellite layer needs to know which images exist, but SLIDER does not let web
 pages read its list of times, so this job fetches it and republishes it alongside the
@@ -11,8 +11,13 @@ import json
 import os
 import urllib.request
 
-SATELLITES = ["goes-19", "goes-18", "himawari", "meteosat-9"]
-SOURCE_URL = "https://slider.cira.colostate.edu/data/json/{}/full_disk/geocolor/latest_times.json"
+# (satellite, product) pairs. GeoColor times are published under the satellite's name
+# alone; any other product under "satellite/product".
+PRODUCTS = [
+    ("goes-19", "geocolor"), ("goes-18", "geocolor"), ("himawari", "geocolor"),
+    ("meteosat-9", "geocolor"), ("meteosat-9", "band_09"),
+]
+SOURCE_URL = "https://slider.cira.colostate.edu/data/json/{}/full_disk/{}/latest_times.json"
 OUT_PATH = "data/satellite_times.json"
 
 
@@ -25,16 +30,17 @@ def main():
         except ValueError:
             times = {}
 
-    for satellite in SATELLITES:
+    for satellite, product in PRODUCTS:
+        key = satellite if product == "geocolor" else f"{satellite}/{product}"
         try:
-            with urllib.request.urlopen(SOURCE_URL.format(satellite), timeout=20) as response:
+            with urllib.request.urlopen(SOURCE_URL.format(satellite, product), timeout=20) as response:
                 stamps = [str(t) for t in json.load(response)["timestamps_int"]]
             if not stamps or not all(len(s) == 14 and s.isdigit() for s in stamps[:3]):
                 raise ValueError("unexpected list of times")
-            times[satellite] = sorted(stamps, reverse=True)[:3]
-            print(f"{satellite}: newest {times[satellite][0]}")
+            times[key] = sorted(stamps, reverse=True)[:3]
+            print(f"{key}: newest {times[key][0]}")
         except Exception as error:
-            print(f"{satellite}: kept previous times ({error})")
+            print(f"{key}: kept previous times ({error})")
 
     with open(OUT_PATH, "w") as f:
         json.dump(times, f, separators=(",", ":"))

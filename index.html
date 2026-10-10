@@ -1615,6 +1615,9 @@ input.bc-num { font-size: 1rem !important; padding: 0 .75rem !important; }
 
 /* ── Top-right toolbar ────────────────────────────────── */
 .bc-cluster { border-radius: var(--radius-card) !important; box-shadow: none !important; padding: .25rem !important; background: var(--bg-card) !important; border-color: var(--border) !important; }
+/* Every toolbar button centres whatever it holds, icon or text */
+.bc-cluster button, .bc-cluster a { display: inline-flex !important; align-items: center !important; justify-content: center !important; padding: 0 !important; line-height: 1 !important; }
+.bc-cluster svg { display: block; flex: none; }
 .bc-cluster > button {
   border-radius: var(--radius-btn) !important; box-shadow: none !important; transform: none !important;
   background: transparent !important; color: var(--text-2) !important;
@@ -2037,8 +2040,11 @@ html.dark #customDashboardView .dark\:bg-black\/50 { background-color: var(--bg-
             </svg>
         </button>
 
-        <button id="satelliteBtn" onclick="toggleSatellite()" class="layer-btn bg-white dark:bg-gray-800 text-gray-700 dark:text-gray-200 hover:bg-gray-100 dark:hover:bg-gray-700 flex items-center justify-center">
+        <button id="satelliteBtn" onclick="toggleSatellite('geocolor')" class="layer-btn bg-white dark:bg-gray-800 text-gray-700 dark:text-gray-200 hover:bg-gray-100 dark:hover:bg-gray-700 flex items-center justify-center">
             <span class="font-black tracking-tighter leading-none">SAT</span>
+        </button>
+        <button id="irSatelliteBtn" onclick="toggleSatellite('ir')" class="layer-btn bg-white dark:bg-gray-800 text-gray-700 dark:text-gray-200 hover:bg-gray-100 dark:hover:bg-gray-700 flex items-center justify-center">
+            <span class="font-black tracking-tighter leading-none" style="font-size:0.6rem">IR<br>SAT</span>
         </button>
 
         <div class="chart-btn-row">
@@ -3813,24 +3819,65 @@ function calculateFeelsLike(tempC, windKt, rh) {
     let SATELLITE_TIMES_URL = `${BASE_URL}/data/satellite_times.json`;
     const SLIDER_MAX_AGE_MINUTES = 90; // older than this, use the fallback source instead
 
-    // slider: SLIDER name, the satellite's longitude, its imager's navigation constants
-    // (reference full-disk width and column scaling factor), SLIDER's tile size and deepest
-    // zoom level, and the map zoom at which that detail is reached.
+    // Each sector has two looks: "geocolor" (the SAT button) and "ir" (the IR SAT button,
+    // colour-enhanced infrared: grey cloud with the coldest, highest tops in colour).
+    // A look names where its pictures come from:
+    //   slider: SLIDER product and its deepest zoom level, plus the map zoom at which that
+    //           detail is reached. The page reshapes these onto the map.
+    //   gibs / wms: ordinary map tiles from NASA or EUMETSAT. Used directly, or as the
+    //           fallback when the look also has a slider entry.
+    // "geostationary" holds the satellite's SLIDER name, its longitude, its imager's
+    // navigation constants (reference full-disk width and column scaling factor) and
+    // SLIDER's tile size.
     const SATELLITE_SOURCES = [
         { name: 'GOES-West', west: -178.25, east: -106,
-          slider: { sat: 'goes-18', subLon: -137.0, refWidth: 21696, cfac: 81708053, tile: 678, maxZoom: 4, mapMaxZoom: 7 },
-          fallbackName: 'GOES-West', gibs: 'GOES-West_ABI_GeoColor', matrix: 'GoogleMapsCompatible_Level7', maxNativeZoom: 7 },
+          geostationary: { sat: 'goes-18', subLon: -137.0, refWidth: 21696, cfac: 81708053, tile: 678 },
+          looks: {
+              geocolor: { slider: { product: 'geocolor', maxZoom: 4, mapMaxZoom: 7 },
+                          gibs: 'GOES-West_ABI_GeoColor', matrix: 'GoogleMapsCompatible_Level7', maxNativeZoom: 7 },
+              ir: { gibs: 'GOES-West_ABI_Band13_Clean_Infrared', matrix: 'GoogleMapsCompatible_Level6', maxNativeZoom: 6 }
+          } },
         { name: 'GOES-East', west: -106, east: -37.5,
-          slider: { sat: 'goes-19', subLon: -75.2, refWidth: 21696, cfac: 81708053, tile: 678, maxZoom: 4, mapMaxZoom: 7 },
-          fallbackName: 'GOES-East', gibs: 'GOES-East_ABI_GeoColor', matrix: 'GoogleMapsCompatible_Level7', maxNativeZoom: 7 },
-        { name: 'Meteosat', west: -37.5, east: 50, wms: 'mtg_fd:rgb_geocolour', maxNativeZoom: 8 },
+          geostationary: { sat: 'goes-19', subLon: -75.2, refWidth: 21696, cfac: 81708053, tile: 678 },
+          looks: {
+              geocolor: { slider: { product: 'geocolor', maxZoom: 4, mapMaxZoom: 7 },
+                          gibs: 'GOES-East_ABI_GeoColor', matrix: 'GoogleMapsCompatible_Level7', maxNativeZoom: 7 },
+              ir: { gibs: 'GOES-East_ABI_Band13_Clean_Infrared', matrix: 'GoogleMapsCompatible_Level6', maxNativeZoom: 6 }
+          } },
+        { name: 'Meteosat', west: -37.5, east: 50,
+          looks: {
+              geocolor: { wms: 'mtg_fd:rgb_geocolour', maxNativeZoom: 8 },
+              ir: { wms: 'mtg_fd:ir105_hrfi', styles: 'mtg_fd_ir105_hrfi_style_02', maxNativeZoom: 8 }
+          } },
         { name: 'Meteosat-9', west: 50, east: 93,
-          slider: { sat: 'meteosat-9', subLon: 45.5, refWidth: 3712, cfac: 13642337, tile: 464, maxZoom: 3, mapMaxZoom: 6 },
-          fallbackName: 'Meteosat-9 infrared', wms: 'msg_iodc:ir108', maxNativeZoom: 7 },
+          geostationary: { sat: 'meteosat-9', subLon: 45.5, refWidth: 3712, cfac: 13642337, tile: 464 },
+          looks: {
+              geocolor: { slider: { product: 'geocolor', maxZoom: 3, mapMaxZoom: 6 },
+                          fallbackName: 'Meteosat-9 infrared', wms: 'msg_iodc:ir108', maxNativeZoom: 7 },
+              ir: { slider: { product: 'band_09', maxZoom: 3, mapMaxZoom: 6 },
+                    fallbackName: 'Meteosat-9 (greyscale)', wms: 'msg_iodc:ir108', maxNativeZoom: 7 }
+          } },
         { name: 'Himawari', west: 93, east: -178.25,
-          slider: { sat: 'himawari', subLon: 140.7, refWidth: 22000, cfac: 81865099, tile: 688, maxZoom: 4, mapMaxZoom: 7 },
-          fallbackName: 'Himawari infrared', gibs: 'Himawari_AHI_Band13_Clean_Infrared', matrix: 'GoogleMapsCompatible_Level6', maxNativeZoom: 6 }
+          geostationary: { sat: 'himawari', subLon: 140.7, refWidth: 22000, cfac: 81865099, tile: 688 },
+          looks: {
+              geocolor: { slider: { product: 'geocolor', maxZoom: 4, mapMaxZoom: 7 },
+                          fallbackName: 'Himawari infrared', gibs: 'Himawari_AHI_Band13_Clean_Infrared', matrix: 'GoogleMapsCompatible_Level6', maxNativeZoom: 6 },
+              ir: { gibs: 'Himawari_AHI_Band13_Clean_Infrared', matrix: 'GoogleMapsCompatible_Level6', maxNativeZoom: 6 }
+          } }
     ];
+    const SATELLITE_BUTTONS = { geocolor: 'satelliteBtn', ir: 'irSatelliteBtn' };
+    let satelliteLook = null; // 'geocolor' or 'ir' while satellite imagery is on
+
+    // Points a sector at one of its looks: the fields the rest of the code reads (slider,
+    // gibs, matrix, wms, styles, maxNativeZoom, fallbackName) are copied up from the look
+    function applySatelliteLook(source, look) {
+        const spec = source.looks[look];
+        source.slider = spec.slider ? Object.assign({}, source.geostationary, spec.slider) : null;
+        ['gibs', 'matrix', 'wms', 'styles', 'maxNativeZoom', 'fallbackName'].forEach(key => { source[key] = spec[key] || null; });
+        source.time = null;
+        source.timeLabel = null;
+        source.sliderTimes = null;
+    }
     let satelliteLayers = null; // source -> tile layer, while the imagery is on
     let satelliteBoundaryLayer = null;
     let satelliteRefreshInterval = null;
@@ -3907,7 +3954,7 @@ function calculateFeelsLike(tempC, windKt, rh) {
         const pad = (n, len) => String(n).padStart(len, '0');
         for (const ts of source.sliderTimes.slice(0, 2)) {
             const img = await loadSliderImage(`${SLIDER_URL}/data/imagery/${ts.slice(0, 4)}/${ts.slice(4, 6)}/${ts.slice(6, 8)}/` +
-                `${source.slider.sat}---full_disk/geocolor/${ts}/${pad(zoom, 2)}/${pad(row, 3)}_${pad(col, 3)}.png`);
+                `${source.slider.sat}---full_disk/${source.slider.product}/${ts}/${pad(zoom, 2)}/${pad(row, 3)}_${pad(col, 3)}.png`);
             if (img) return img;
         }
         return null;
@@ -4146,7 +4193,7 @@ function calculateFeelsLike(tempC, windKt, rh) {
             if (source.wms) {
                 options.attribution = 'Imagery &copy; EUMETSAT';
                 layer = new L.SatelliteWMS(`${EUMETSAT_URL}/wms`, Object.assign(options, {
-                    layers: source.wms, format: 'image/png', transparent: true, version: '1.3.0'
+                    layers: source.wms, styles: source.styles || '', format: 'image/png', transparent: true, version: '1.3.0'
                 }));
             } else {
                 options.attribution = 'Imagery: NASA GIBS (NOAA, JMA)';
@@ -4171,7 +4218,9 @@ function calculateFeelsLike(tempC, windKt, rh) {
 
         await Promise.all(SATELLITE_SOURCES.map(async source => {
             // SLIDER is used when it has an image for this satellite that is recent enough
-            let times = source.slider && sliderTimes ? sliderTimes[source.slider.sat] : null;
+            // Times are listed per satellite for GeoColor and per satellite/product for the rest
+            const timesKey = source.slider && (source.slider.product === 'geocolor' ? source.slider.sat : `${source.slider.sat}/${source.slider.product}`);
+            let times = timesKey && sliderTimes ? sliderTimes[timesKey] : null;
             if (times && times.length) {
                 const t = times[0];
                 const taken = Date.UTC(+t.slice(0, 4), +t.slice(4, 6) - 1, +t.slice(6, 8), +t.slice(8, 10), +t.slice(10, 12));
@@ -4198,13 +4247,13 @@ function calculateFeelsLike(tempC, windKt, rh) {
                 source.sliderTimes = times;
                 source.time = times[0];
                 source.timeLabel = `${times[0].slice(8, 10)}:${times[0].slice(10, 12)}Z`;
-                source.shownName = source.name;
+                source.shownName = source.name + (satelliteLook === 'ir' ? ' infrared' : '');
                 if (layer._drawnTime !== times[0]) {
                     layer._drawnTime = times[0];
                     layer.redraw(); // a newer image has arrived
                 }
             } else {
-                source.shownName = source.fallbackName || source.name;
+                source.shownName = source.fallbackName || (source.name + (satelliteLook === 'ir' ? ' infrared' : ''));
                 if (!fallbackTime) {
                     // Time unknown: the service's "latest" image is being shown, so just reload it
                     source.timeLabel = 'latest';
@@ -4285,32 +4334,37 @@ function calculateFeelsLike(tempC, windKt, rh) {
         });
     })();
 
-    function toggleSatellite() {
-        const btn = document.getElementById('satelliteBtn');
-        if (!mapInstance) return;
+    function toggleSatellite(look) {
+        look = look || 'geocolor';
+        if (!mapInstance || !SATELLITE_BUTTONS[look]) return;
 
+        const wasOn = satelliteLook;
         if (satelliteLayers) {
             satelliteLayers.forEach(layer => mapInstance.removeLayer(layer));
             satelliteLayers = null;
+            satelliteLook = null;
             mapInstance.removeLayer(satelliteBoundaryLayer);
             satelliteBoundaryLayer = null;
             clearInterval(satelliteRefreshInterval);
             satelliteRefreshInterval = null;
             mapInstance.off('moveend', updateSatelliteInfo);
-            btn.classList.remove('satellite-active');
-        } else {
+            document.getElementById(SATELLITE_BUTTONS[wasOn]).classList.remove('satellite-active');
+        }
+        // Pressing the button of the look that is showing turns it off; the other one switches to it
+        if (wasOn !== look) {
             // Above the base map, below every weather layer
             const pane = mapInstance.getPane('satellitePane') || mapInstance.createPane('satellitePane');
             pane.style.zIndex = 203;
             pane.style.pointerEvents = 'none';
 
+            satelliteLook = look;
             satelliteLayers = new Map();
-            SATELLITE_SOURCES.forEach(source => { source.time = null; source.timeLabel = null; });
+            SATELLITE_SOURCES.forEach(source => applySatelliteLook(source, look));
             satelliteBoundaryLayer = new L.BoundaryLayer().addTo(mapInstance);
             mapInstance.on('moveend', updateSatelliteInfo);
             refreshSatelliteTimes(); // creates each sector's layer once its image time is known
             satelliteRefreshInterval = setInterval(refreshSatelliteTimes, 5 * 60 * 1000);
-            btn.classList.add('satellite-active');
+            document.getElementById(SATELLITE_BUTTONS[look]).classList.add('satellite-active');
         }
         updateSatelliteInfo();
         updateLayerActiveState();
@@ -4410,7 +4464,7 @@ function saveLayerSettings() {
         fieldmap: fieldMapLayer ? fieldMapLayer.mode : null,
         pireps: document.getElementById('pirepBtn')?.classList.contains('pirep-active') || false,
         hazards: !!hazardsRefreshInterval,
-        satellite: !!satelliteLayers,
+        satellite: satelliteLook || false,
         daynight: !!dayNightInterval
     };
     try {
@@ -4459,7 +4513,9 @@ function loadLayerSettings() {
     if (settings.freezing !== isFreezingOn) toggleFreezingLayer();
 
     // Apply Satellite
-    if (!!settings.satellite !== !!satelliteLayers) toggleSatellite();
+    // (an older saved value of true meant the GeoColor look)
+    const wantSatellite = settings.satellite === true ? 'geocolor' : (SATELLITE_BUTTONS[settings.satellite] ? settings.satellite : null);
+    if (wantSatellite !== satelliteLook) toggleSatellite(wantSatellite || satelliteLook);
 
     // Apply PIREPs
     const isPirepOn = document.getElementById('pirepBtn')?.classList.contains('pirep-active');
