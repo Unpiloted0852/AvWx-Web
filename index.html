@@ -2116,6 +2116,23 @@ html.dark #customDashboardView .dark\:bg-black\/50 { background-color: var(--bg-
         <p id="dashTileHint" class="mt-2 text-center text-[11px] text-gray-500 dark:text-gray-400">Tap a tile for details. Drag a tile to reorder (press and hold on a touch screen). Tap its ✕ to remove it.</p>
     </div>
 </div>
+<!-- PDF preview: the report is shown here first; Download saves it -->
+<div id="pdfPreviewModal" class="hidden fixed inset-0 flex flex-col bg-black/80" style="z-index: 120000">
+    <div class="flex-none flex items-center gap-3 px-4 py-3 bg-white dark:bg-gray-900 border-b border-gray-200 dark:border-gray-800 shadow-md">
+        <div class="flex-1 min-w-0">
+            <div class="font-bold text-gray-900 dark:text-white leading-tight">PDF preview</div>
+            <div id="pdfPreviewStatus" class="text-xs text-gray-500 dark:text-gray-400 truncate"></div>
+        </div>
+        <button id="pdfPreviewDownloadBtn" onclick="downloadPreviewedPdf()" class="flex-none flex items-center gap-2 bg-green-600 hover:bg-green-700 text-white text-sm font-bold py-2 px-4 rounded-lg shadow-sm">
+            <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v2a2 2 0 002 2h12a2 2 0 002-2v-2M7 10l5 5m0 0l5-5m-5 5V4" /></svg>
+            Download
+        </button>
+        <button onclick="closePdfPreview()" aria-label="Close preview" title="Close preview" class="flex-none p-2 rounded-lg bg-gray-200 dark:bg-gray-800 text-gray-700 dark:text-gray-200 hover:bg-gray-300 dark:hover:bg-gray-700">
+            <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/></svg>
+        </button>
+    </div>
+    <div id="pdfPreviewPages" class="flex-1 overflow-y-auto p-3 sm:p-6 flex flex-col items-center gap-4" onclick="if (event.target === this) closePdfPreview()"></div>
+</div>
 <!-- Custom Clear Confirmation Modal -->
 <div id="confirmClearModal" class="hidden fixed inset-0 z-[2100] flex items-center justify-center bg-black/60 backdrop-blur-sm p-4" onclick="closeClearModal()">
     <div class="bg-white dark:bg-gray-900 rounded-2xl shadow-2xl w-full max-w-sm p-6 border border-gray-200 dark:border-gray-800 text-center transform transition-all scale-100" onclick="event.stopPropagation()">
@@ -4123,6 +4140,7 @@ function calculateFeelsLike(tempC, windKt, rh) {
         if (!info) return;
         if (!satelliteLayers) {
             info.style.display = 'none';
+            positionMapBadges();
             return;
         }
         let lng = mapInstance.getCenter().lng;
@@ -4130,7 +4148,55 @@ function calculateFeelsLike(tempC, windKt, rh) {
         const source = SATELLITE_SOURCES.find(s => s.west < s.east ? (lng >= s.west && lng < s.east) : (lng >= s.west || lng < s.east));
         info.textContent = source && source.timeLabel ? `Satellite: ${source.timeLabel} · ${source.shownName}` : 'Satellite: loading…';
         info.style.display = 'block';
+        positionMapBadges();
     }
+
+    // Keeps the radar-time and satellite badges tucked into the top-left corner of the
+    // map, one under the other, as high as they can go without sitting under the Zulu
+    // clock or the full-screen "Back to Report" button.
+    function positionMapBadges() {
+        const badges = ['radarTimeDisplay', 'satelliteInfo'].map(id => document.getElementById(id))
+            .filter(el => el && getComputedStyle(el).display !== 'none');
+        if (badges.length === 0) return;
+        const mapRect = document.getElementById('weatherMap').getBoundingClientRect();
+        const parentTop = badges[0].offsetParent ? badges[0].offsetParent.getBoundingClientRect().top : mapRect.top;
+        const obstacles = [document.getElementById('zuluClock'), document.querySelector('#fullscreenControls:not(.hidden) button')]
+            .filter(el => el && getComputedStyle(el).display !== 'none')
+            .map(el => el.getBoundingClientRect())
+            .filter(r => r.width > 0);
+        const GAP = 6;
+        let top = mapRect.top + 10; // in window coordinates
+        badges.forEach(badge => {
+            const rect = badge.getBoundingClientRect();
+            // Move down past anything this badge would touch; twice, in case the first move
+            // lands it on the other obstacle
+            for (let pass = 0; pass < 2; pass++) {
+                obstacles.forEach(o => {
+                    const overlapsAcross = rect.left < o.right + GAP && rect.right > o.left - GAP;
+                    const overlapsDown = top < o.bottom + GAP && top + rect.height > o.top - GAP;
+                    if (overlapsAcross && overlapsDown) top = o.bottom + GAP;
+                });
+            }
+            const value = Math.round(top - parentTop) + 'px';
+            if (badge.style.top !== value) badge.style.top = value;
+            top += rect.height + GAP;
+        });
+    }
+    // Anything that can change where the badges belong
+    (function() {
+        let queued = false;
+        const later = () => {
+            if (queued) return;
+            queued = true;
+            requestAnimationFrame(() => { queued = false; positionMapBadges(); });
+        };
+        window.addEventListener('scroll', later, { passive: true, capture: true });
+        window.addEventListener('resize', later);
+        ['radarTimeDisplay', 'satelliteInfo', 'fullscreenControls', 'mapView'].forEach(id => {
+            const el = document.getElementById(id);
+            if (el) new MutationObserver(later).observe(el, { attributes: true, attributeFilter: ['style', 'class'], childList: true, characterData: true, subtree: id !== 'mapView' });
+        });
+    })();
 
     function toggleSatellite() {
         const btn = document.getElementById('satelliteBtn');
@@ -7928,6 +7994,143 @@ function mergeCondition(baseStr, changeStr) {
         return regex.test(clean);
     }
 
+  // --- PDF PREVIEW ---
+  // The report is shown in a full-screen preview before anything is saved. Pages are
+  // drawn with PDF.js, because neither the Android app nor most phone browsers can
+  // display a PDF inside a page on their own. PDF.js is only fetched when first needed.
+  const PDFJS_URL = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/';
+  let pdfPreview = null; // the report on show: { doc, filename, pdf, observer }
+  let pdfJsLoading = null;
+
+  function loadPdfJs() {
+      if (window.pdfjsLib) return Promise.resolve();
+      if (!pdfJsLoading) {
+          pdfJsLoading = new Promise((resolve, reject) => {
+              const script = document.createElement('script');
+              script.src = PDFJS_URL + 'pdf.min.js';
+              script.onload = () => {
+                  window.pdfjsLib.GlobalWorkerOptions.workerSrc = PDFJS_URL + 'pdf.worker.min.js';
+                  resolve();
+              };
+              script.onerror = () => {
+                  pdfJsLoading = null; // allow another try next time
+                  reject(new Error('PDF viewer could not be loaded'));
+              };
+              document.head.appendChild(script);
+          });
+      }
+      return pdfJsLoading;
+  }
+
+  async function showPdfPreview(doc, filename) {
+      const modal = document.getElementById('pdfPreviewModal');
+      const pagesEl = document.getElementById('pdfPreviewPages');
+      const status = document.getElementById('pdfPreviewStatus');
+      const preview = { doc: doc, filename: filename, pdf: null, observer: null };
+      pdfPreview = preview;
+      pagesEl.innerHTML = '';
+      status.textContent = 'Preparing preview…';
+      modal.classList.remove('hidden');
+      // Lets the phone's back button close the preview instead of leaving the app
+      history.pushState({ pdfPreview: true }, '');
+
+      try {
+          await loadPdfJs();
+          const pdf = await window.pdfjsLib.getDocument({ data: doc.output('arraybuffer') }).promise;
+          if (pdfPreview !== preview) { // closed, or replaced by a newer report, meanwhile
+              pdf.destroy();
+              return;
+          }
+          preview.pdf = pdf;
+          status.textContent = `${pdf.numPages} ${pdf.numPages === 1 ? 'page' : 'pages'} · ${filename}`;
+
+          // Every page gets a blank sheet straight away; each is drawn when it scrolls
+          // near the screen, so a long report opens quickly
+          const first = await pdf.getPage(1);
+          const shape = first.getViewport({ scale: 1 });
+          preview.observer = new IntersectionObserver(entries => {
+              entries.forEach(entry => {
+                  if (!entry.isIntersecting) {
+                      // Far off screen again: let the drawing go so a long report doesn't use up memory
+                      entry.target.replaceChildren();
+                      delete entry.target.dataset.drawn;
+                      return;
+                  }
+                  if (entry.target.dataset.drawn) return;
+                  entry.target.dataset.drawn = '1';
+                  drawPdfPreviewPage(preview, +entry.target.dataset.page, entry.target);
+              });
+          }, { root: pagesEl, rootMargin: '800px 0px' });
+          for (let n = 1; n <= pdf.numPages; n++) {
+              const sheet = document.createElement('div');
+              sheet.dataset.page = n;
+              sheet.className = 'flex-none w-full bg-white shadow-xl';
+              sheet.style.maxWidth = '820px';
+              sheet.style.aspectRatio = `${shape.width} / ${shape.height}`;
+              pagesEl.appendChild(sheet);
+              preview.observer.observe(sheet);
+          }
+      } catch (e) {
+          console.error('PDF preview failed:', e);
+          if (pdfPreview === preview) {
+              status.textContent = 'Preview unavailable. You can still download the PDF.';
+          }
+      }
+  }
+
+  async function drawPdfPreviewPage(preview, pageNumber, sheet) {
+      try {
+          const page = await preview.pdf.getPage(pageNumber);
+          if (pdfPreview !== preview) return;
+          // Sharp at the size it is shown, including on high-resolution screens
+          const scale = sheet.clientWidth / page.getViewport({ scale: 1 }).width * Math.min(2, window.devicePixelRatio || 1);
+          const viewport = page.getViewport({ scale: scale });
+          const canvas = document.createElement('canvas');
+          canvas.width = viewport.width;
+          canvas.height = viewport.height;
+          canvas.style.width = '100%';
+          canvas.style.display = 'block';
+          await page.render({ canvasContext: canvas.getContext('2d'), viewport: viewport }).promise;
+          if (pdfPreview === preview && sheet.dataset.drawn) sheet.replaceChildren(canvas);
+      } catch (e) {
+          delete sheet.dataset.drawn; // try again if it scrolls back into view
+      }
+  }
+
+  function closePdfPreview(fromBackButton) {
+      const preview = pdfPreview;
+      if (!preview) return;
+      pdfPreview = null;
+      if (preview.observer) preview.observer.disconnect();
+      if (preview.pdf) preview.pdf.destroy();
+      document.getElementById('pdfPreviewModal').classList.add('hidden');
+      document.getElementById('pdfPreviewPages').innerHTML = '';
+      // Remove the history entry added when the preview opened
+      if (!fromBackButton && history.state && history.state.pdfPreview) history.back();
+  }
+
+  function downloadPreviewedPdf() {
+      if (!pdfPreview) return;
+      const { doc, filename } = pdfPreview;
+      try {
+          if (window.Android && typeof window.Android.savePdf === 'function') {
+              // The app saves the file to the phone's Downloads folder
+              const dataUri = doc.output('datauristring');
+              window.Android.savePdf(dataUri.substring(dataUri.indexOf(',') + 1), filename);
+          } else {
+              doc.save(filename);
+          }
+      } catch (e) {
+          console.error('PDF download failed:', e);
+          alert('Could not save the PDF. Please try again.');
+      }
+  }
+
+  window.addEventListener('popstate', () => closePdfPreview(true));
+  document.addEventListener('keydown', event => {
+      if (event.key === 'Escape' && pdfPreview) closePdfPreview();
+  });
+
   function generatePDF(stationsData, refName, routeAnalysisResult) {
     if (!window.jspdf || !window.jspdf.jsPDF) {
         alert("PDF Library failed to load. Please reload the page.");
@@ -8188,21 +8391,7 @@ if (typeof formatAge === 'function' && data.metar.age != null) {
         cursorY += 6;
     }
 
-    try {
-        const pdfDataUri = doc.output('datauristring');
-        const base64Data = pdfDataUri.substring(pdfDataUri.indexOf(',') + 1);
-        
-        if (window.Android && typeof window.Android.savePdf === 'function') {
-            window.Android.savePdf(base64Data, "weather-report-combined.pdf");
-        } else {
-            const blob = doc.output('blob');
-            const blobUrl = URL.createObjectURL(blob);
-            window.open(blobUrl, '_blank');
-        }
-    } catch (e) {
-        console.error('PDF export failed:', e);
-        doc.save("weather-report-combined.pdf");
-    }
+    showPdfPreview(doc, "weather-report-combined.pdf");
 }
 
 // --- CUSTOM DASHBOARD FEATURE ---
