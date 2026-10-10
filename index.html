@@ -1570,6 +1570,47 @@ input.bc-num { font-size: 1rem !important; padding: 0 .75rem !important; }
   #toggleAdvanced { height: 2.75rem !important; width: auto !important; }
   #generateButton { width: auto !important; min-width: 6.5rem !important; }
 }
+
+/* ── Phones: the map comes first ───────────────────────
+   The heading shrinks to one line with the Legend button beside it, the input box
+   drops to two short rows, and the Map / List / PDF controls share one row. The
+   introduction and notice move below the results (see .bc-footnote). */
+.bc-narrow-only, .bc-footnote { display: none; }
+@media (max-width: 639px) {
+  .bc-wide-only { display: none; }
+  .bc-narrow-only { display: inline; }
+  .bc-hero { padding-top: 2rem !important; margin-bottom: .5rem !important; }
+  .bc-inputs { padding-bottom: .25rem !important; }
+  .bc-hero-inner { display: flex; align-items: center; justify-content: space-between; gap: .5rem; }
+  .bc-title { font-size: 1.1rem !important; margin: 0 !important; min-width: 0; }
+  .bc-hero .bc-sub, .bc-hero .bc-notice { display: none !important; }
+  #legendDropdownContainer { margin-top: 0 !important; flex: none; }
+  #legendDropdownMenu { left: auto !important; right: 0 !important; transform: none !important; }
+
+  .bc-console { margin-bottom: .5rem !important; }
+  .bc-console-body {
+    grid-template-columns: auto minmax(0, 1fr) auto; grid-template-areas: "home home go" "runway alt alt";
+    gap: .5rem .6rem; padding: .6rem .7rem !important;
+  }
+  .bc-row > .bc-field:last-child { display: flex; align-items: center; gap: .4rem; min-width: 0; }
+  .bc-row > .bc-field:last-child label { margin: 0 !important; white-space: nowrap; }
+  .bc-row > .bc-field:last-child input.bc-num { width: 4rem !important; height: 2.25rem !important; flex: none; }
+  #generateButton { width: auto !important; padding: 0 1.4rem !important; }
+  #toggleAdvanced { width: auto !important; font-size: .74rem !important; padding: 0 .7rem !important; justify-self: end; }
+
+  #resultsContainer { padding: .5rem !important; }
+  #resultsContainer > div:first-child { flex-wrap: nowrap !important; gap: .5rem !important; margin-bottom: .5rem !important; }
+  #resultsContainer > div:first-child > div:first-child { width: auto !important; min-width: 0 !important; flex: 1 1 0 !important; }
+  #resultsContainer .tab-button { padding-top: .45rem !important; padding-bottom: .45rem !important; }
+
+  .bc-footnote { display: block; margin: .75rem .25rem 0; color: var(--text-3); font-size: .75rem; line-height: 1.45; }
+  .bc-footnote p { margin: 0 0 .35rem; }
+}
+/* Very narrow phones: the alternate planning button gets its own row */
+@media (max-width: 349px) {
+  .bc-console-body { grid-template-areas: "home home go" "runway runway runway" "alt alt alt"; }
+  #toggleAdvanced { width: 100% !important; justify-self: stretch; }
+}
 :focus-visible { outline: 2px solid var(--blue) !important; outline-offset: 2px; }
 
 /* ── Top-right toolbar ────────────────────────────────── */
@@ -1699,7 +1740,7 @@ html.dark #customDashboardView .dark\:bg-black\/50 { background-color: var(--bg-
  </div>
 
 <!-- MAIN CONTAINER (Full Width) -->
-<div class="w-full px-3 md:px-8 pt-4 mt-2 pb-8">
+<div class="bc-inputs w-full px-3 md:px-8 pt-4 mt-2 pb-8">
 
    <!-- TOP-RIGHT CONTROL ROW (Prevents overlapping) -->
 <div class="z-[110] absolute top-0 right-0 md:top-4 flex items-center bc-cluster">
@@ -1827,7 +1868,7 @@ html.dark #customDashboardView .dark\:bg-black\/50 { background-color: var(--bg-
                     </div>
                 </div>
                 <div class="bc-field">
-                    <label for="minRunway">Min. runway (ft)</label>
+                    <label for="minRunway"><span class="bc-wide-only">Min. runway (ft)</span><span class="bc-narrow-only">Min rwy (ft)</span></label>
                     <input type="number" id="minRunway" placeholder="0" min="0" step="100" class="bc-num">
                 </div>
               </div>
@@ -2365,6 +2406,21 @@ function updateLayerActiveState() {
 
     const generateButton = document.getElementById('generateButton');
     const downloadPdfBtn = document.getElementById('downloadPdfBtn');
+
+    // On phones the introduction and notice are shown below the results, so the map comes
+    // first; this makes that copy of them (the stylesheet decides which copy is visible)
+    (function() {
+        const results = document.getElementById('resultsContainer');
+        const footnote = document.createElement('div');
+        footnote.className = 'bc-footnote';
+        document.querySelectorAll('.bc-hero .bc-sub, .bc-hero .bc-notice').forEach(el => {
+            const p = document.createElement('p');
+            p.innerHTML = el.innerHTML;
+            footnote.appendChild(p);
+        });
+        if (results && footnote.children.length) results.insertAdjacentElement('afterend', footnote);
+    })();
+
     const icaoInput = document.getElementById('icaoInput');
     const statusEl = document.getElementById('status');
     const detailsEl = document.getElementById('details');
