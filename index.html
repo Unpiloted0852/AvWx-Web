@@ -1539,6 +1539,37 @@ input[type="text"], input[type="number"] { border-radius: var(--radius-btn) !imp
   font: 600 .82rem/1 'Public Sans', sans-serif !important; letter-spacing: 0 !important;
 }
 #toggleAdvanced:hover { border-color: var(--text-2) !important; color: var(--text-1) !important; background: var(--bg-raised) !important; }
+
+/* ── Compact input box ─────────────────────────────────
+   Everything on one line on wide screens; on phones the airport gets its own line,
+   then runway length sits beside Go. The alternate-planner details open underneath. */
+.bc-console { margin-bottom: .75rem !important; }
+.bc-console-body {
+  display: grid; align-items: end; gap: .6rem .75rem; padding: .8rem .9rem !important;
+  grid-template-columns: 7.5rem 1fr;
+  grid-template-areas: "home home" "runway go" "alt alt";
+}
+.bc-row, .bc-actions { display: contents !important; }
+.bc-row > .bc-field:first-child { grid-area: home; }
+.bc-row > .bc-field:last-child { grid-area: runway; }
+#toggleAdvanced { grid-area: alt; }
+#generateButton { grid-area: go; }
+#advancedInputs { grid-column: 1 / -1; margin-top: .25rem !important; padding-top: .75rem !important; }
+.bc-field label { margin-bottom: .3rem !important; font-size: .74rem !important; }
+.bc-icao-row, input.bc-num { height: 2.75rem !important; }
+#icaoInput { font-size: 1.1rem !important; padding: 0 .8rem !important; }
+input.bc-num { font-size: 1rem !important; padding: 0 .75rem !important; }
+#gpsHomeBtn { padding: 0 1rem !important; }
+#generateButton { height: 2.75rem !important; padding: 0 1.75rem !important; width: 100% !important; min-width: 0 !important; }
+#toggleAdvanced { height: 2.25rem !important; padding: 0 .9rem !important; justify-content: center; width: 100% !important; white-space: nowrap; }
+@media (min-width: 640px) {
+  .bc-console-body {
+    grid-template-columns: minmax(0, 1fr) 8.5rem auto auto;
+    grid-template-areas: "home runway alt go";
+  }
+  #toggleAdvanced { height: 2.75rem !important; width: auto !important; }
+  #generateButton { width: auto !important; min-width: 6.5rem !important; }
+}
 :focus-visible { outline: 2px solid var(--blue) !important; outline-offset: 2px; }
 
 /* ── Top-right toolbar ────────────────────────────────── */
