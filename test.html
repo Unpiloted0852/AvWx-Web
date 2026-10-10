@@ -3694,17 +3694,38 @@ function calculateFeelsLike(tempC, windKt, rh) {
     // --- SATELLITE IMAGERY ---
     // Recent geostationary satellite images covering the whole world. Each satellite sees
     // one side of the globe, so the map is split into longitude sectors and each sector
-    // shows the satellite best placed for it. Colour "GeoColor" imagery is used where a
-    // free tile service offers it (GOES and Meteosat); the Indian Ocean and Asia-Pacific
-    // sectors use infrared, which also works at night.
+    // shows the satellite best placed for it.
+    //
+    // Day/night "GeoColor" comes from CIRA's SLIDER service for the GOES, Himawari and
+    // Indian Ocean Meteosat sectors. SLIDER publishes each satellite's full-disk picture as
+    // seen from orbit, so those sectors are reshaped onto the map here in the page.
+    // Europe/Africa uses EUMETSAT's GeoColour map service directly. If SLIDER or its list
+    // of image times is unavailable, a sector falls back to NASA or EUMETSAT map tiles.
+    const SLIDER_URL = 'https://slider.cira.colostate.edu';
     const GIBS_URL = 'https://gibs.earthdata.nasa.gov/wmts/epsg3857/best';
     const EUMETSAT_URL = 'https://view.eumetsat.int/geoserver';
+    // SLIDER's image times, republished by this project's data job because SLIDER itself
+    // does not let web pages read them
+    let SATELLITE_TIMES_URL = `${BASE_URL}/data/satellite_times.json`;
+    const SLIDER_MAX_AGE_MINUTES = 90; // older than this, use the fallback source instead
+
+    // slider: SLIDER name, the satellite's longitude, its imager's navigation constants
+    // (reference full-disk width and column scaling factor), SLIDER's tile size and deepest
+    // zoom level, and the map zoom at which that detail is reached.
     const SATELLITE_SOURCES = [
-        { name: 'GOES-West', west: -178.25, east: -106, gibs: 'GOES-West_ABI_GeoColor', matrix: 'GoogleMapsCompatible_Level7', maxNativeZoom: 7 },
-        { name: 'GOES-East', west: -106, east: -37.5, gibs: 'GOES-East_ABI_GeoColor', matrix: 'GoogleMapsCompatible_Level7', maxNativeZoom: 7 },
+        { name: 'GOES-West', west: -178.25, east: -106,
+          slider: { sat: 'goes-18', subLon: -137.0, refWidth: 21696, cfac: 81708053, tile: 678, maxZoom: 4, mapMaxZoom: 7 },
+          fallbackName: 'GOES-West', gibs: 'GOES-West_ABI_GeoColor', matrix: 'GoogleMapsCompatible_Level7', maxNativeZoom: 7 },
+        { name: 'GOES-East', west: -106, east: -37.5,
+          slider: { sat: 'goes-19', subLon: -75.2, refWidth: 21696, cfac: 81708053, tile: 678, maxZoom: 4, mapMaxZoom: 7 },
+          fallbackName: 'GOES-East', gibs: 'GOES-East_ABI_GeoColor', matrix: 'GoogleMapsCompatible_Level7', maxNativeZoom: 7 },
         { name: 'Meteosat', west: -37.5, east: 50, wms: 'mtg_fd:rgb_geocolour', maxNativeZoom: 8 },
-        { name: 'Meteosat IODC infrared', west: 50, east: 93, wms: 'msg_iodc:ir108', maxNativeZoom: 7 },
-        { name: 'Himawari infrared', west: 93, east: -178.25, gibs: 'Himawari_AHI_Band13_Clean_Infrared', matrix: 'GoogleMapsCompatible_Level6', maxNativeZoom: 6 }
+        { name: 'Meteosat-9', west: 50, east: 93,
+          slider: { sat: 'meteosat-9', subLon: 45.5, refWidth: 3712, cfac: 13642337, tile: 464, maxZoom: 3, mapMaxZoom: 6 },
+          fallbackName: 'Meteosat-9 infrared', wms: 'msg_iodc:ir108', maxNativeZoom: 7 },
+        { name: 'Himawari', west: 93, east: -178.25,
+          slider: { sat: 'himawari', subLon: 140.7, refWidth: 22000, cfac: 81865099, tile: 688, maxZoom: 4, mapMaxZoom: 7 },
+          fallbackName: 'Himawari infrared', gibs: 'Himawari_AHI_Band13_Clean_Infrared', matrix: 'GoogleMapsCompatible_Level6', maxNativeZoom: 6 }
     ];
     let satelliteLayers = null; // source -> tile layer, while the imagery is on
     let satelliteBoundaryLayer = null;
@@ -3733,6 +3754,61 @@ function calculateFeelsLike(tempC, windKt, rh) {
         return null;
     }
 
+    function applySatelliteClip(tile, clip) {
+        if (clip.left > 0 || clip.right > 0) {
+            tile.style.clipPath = `inset(0 ${(clip.right * 100).toFixed(3)}% 0 ${(clip.left * 100).toFixed(3)}%)`;
+        }
+    }
+
+    // Where a place appears in a satellite's full-disk image that is "width" pixels across,
+    // as [column, row] (standard CGMS geostationary projection). null if the satellite
+    // cannot see that place.
+    function geostationaryPixel(lat, lon, slider, width) {
+        const H = 42164.0; // satellite's distance from the Earth's centre, km
+        const latR = lat * Math.PI / 180, dLon = (lon - slider.subLon) * Math.PI / 180;
+        const cLat = Math.atan(0.993243 * Math.tan(latR)); // geocentric latitude
+        const rl = 6356.7523 / Math.sqrt(1 - 0.00669438444 * Math.cos(cLat) * Math.cos(cLat));
+        const r1 = H - rl * Math.cos(cLat) * Math.cos(dLon);
+        const r2 = -rl * Math.cos(cLat) * Math.sin(dLon);
+        const r3 = rl * Math.sin(cLat);
+        // Visible only if the line from the satellite to the place does not pass through the Earth
+        if (r1 * (r1 - H) + r2 * r2 + r3 * r3 * Math.pow(6378.137 / 6356.7523, 2) > 0) return null;
+        const rn = Math.sqrt(r1 * r1 + r2 * r2 + r3 * r3);
+        const x = Math.atan(-r2 / r1) * 180 / Math.PI;
+        const y = Math.asin(-r3 / rn) * 180 / Math.PI;
+        const pxPerDeg = (slider.cfac / 65536) * (width / slider.refWidth);
+        return [width / 2 + x * pxPerDeg, width / 2 + y * pxPerDeg];
+    }
+
+    // SLIDER tiles already fetched or being fetched: url -> Promise of an image (or null)
+    const sliderImageCache = new Map();
+
+    function loadSliderImage(url) {
+        if (sliderImageCache.has(url)) return sliderImageCache.get(url);
+        const promise = new Promise(resolve => {
+            const img = new Image();
+            img.onload = () => resolve(img);
+            img.onerror = () => resolve(null);
+            img.src = url;
+        });
+        sliderImageCache.set(url, promise);
+        // Keep the cache small: these are large images
+        if (sliderImageCache.size > 80) sliderImageCache.delete(sliderImageCache.keys().next().value);
+        return promise;
+    }
+
+    // One tile of a satellite's full-disk image. The newest image is tried first; while it
+    // is still being published some tiles are missing, so the one before it is the backup.
+    async function loadSliderTile(source, zoom, row, col) {
+        const pad = (n, len) => String(n).padStart(len, '0');
+        for (const ts of source.sliderTimes.slice(0, 2)) {
+            const img = await loadSliderImage(`${SLIDER_URL}/data/imagery/${ts.slice(0, 4)}/${ts.slice(4, 6)}/${ts.slice(6, 8)}/` +
+                `${source.slider.sat}---full_disk/geocolor/${ts}/${pad(zoom, 2)}/${pad(row, 3)}_${pad(col, 3)}.png`);
+            if (img) return img;
+        }
+        return null;
+    }
+
     // A tile layer that only loads tiles inside its source's sector and trims the tiles
     // that straddle the sector's edges
     function sectorTileClass(Base) {
@@ -3746,9 +3822,7 @@ function calculateFeelsLike(tempC, windKt, rh) {
                     return blank;
                 }
                 const tile = Base.prototype.createTile.call(this, coords, done);
-                if (clip.left > 0 || clip.right > 0) {
-                    tile.style.clipPath = `inset(0 ${(clip.right * 100).toFixed(3)}% 0 ${(clip.left * 100).toFixed(3)}%)`;
-                }
+                applySatelliteClip(tile, clip);
                 return tile;
             }
         });
@@ -3756,6 +3830,126 @@ function calculateFeelsLike(tempC, windKt, rh) {
     if (typeof L.SatelliteTiles === 'undefined') {
         L.SatelliteTiles = sectorTileClass(L.TileLayer);
         L.SatelliteWMS = sectorTileClass(L.TileLayer.WMS);
+
+        // Map tiles drawn in the page from a satellite's full-disk SLIDER image. Each map
+        // tile is covered with a mesh of small triangles; every triangle is filled with
+        // the matching piece of the satellite image, stretched to fit.
+        L.GeostationaryLayer = L.GridLayer.extend({
+            options: { source: null },
+
+            createTile: function(coords, done) {
+                const source = this.options.source;
+                const size = this.getTileSize();
+                const scale = Math.min(2, window.devicePixelRatio || 1); // extra detail on sharp screens
+                const canvas = document.createElement('canvas');
+                canvas.width = size.x * scale;
+                canvas.height = size.y * scale;
+                const clip = satelliteTileClip(coords, source, 0);
+                if (!clip) {
+                    setTimeout(() => done(null, canvas), 0);
+                    return canvas;
+                }
+                applySatelliteClip(canvas, clip);
+                this._drawTile(canvas, coords).then(() => done(null, canvas), error => done(error, canvas));
+                return canvas;
+            },
+
+            _drawTile: async function(canvas, coords) {
+                const source = this.options.source, slider = source.slider;
+                const MESH = 8; // triangles pairs per tile side
+                const count = Math.pow(2, coords.z);
+                const cell = canvas.width / MESH;
+
+                // Where each mesh point falls in the satellite image, as a fraction of its width
+                const points = [];
+                for (let j = 0; j <= MESH; j++) {
+                    const worldY = (coords.y + j / MESH) / count;
+                    const lat = Math.atan(Math.sinh(Math.PI * (1 - 2 * worldY))) * 180 / Math.PI;
+                    for (let i = 0; i <= MESH; i++) {
+                        const lon = (coords.x + i / MESH) / count * 360 - 180;
+                        points.push(geostationaryPixel(lat, lon, slider, 1));
+                    }
+                }
+                const at = (i, j) => points[j * (MESH + 1) + i];
+
+                // Pick the SLIDER zoom level whose detail matches this map tile
+                let widest = 0;
+                for (let j = 0; j <= MESH; j++) {
+                    for (let i = 0; i < MESH; i++) {
+                        const a = at(i, j), b = at(i + 1, j);
+                        if (a && b) widest = Math.max(widest, Math.hypot(b[0] - a[0], b[1] - a[1]));
+                    }
+                }
+                if (widest === 0) return; // this tile is entirely out of the satellite's sight
+                const zoom = Math.max(0, Math.min(slider.maxZoom, Math.ceil(Math.log2(cell / widest / slider.tile))));
+                const width = slider.tile * Math.pow(2, zoom);
+                const lastTile = Math.pow(2, zoom) - 1;
+
+                // Triangles as [destination corners, satellite-image corners]
+                const triangles = [];
+                const needed = new Map();
+                for (let j = 0; j < MESH; j++) {
+                    for (let i = 0; i < MESH; i++) {
+                        [[[i, j], [i + 1, j], [i, j + 1]], [[i + 1, j + 1], [i, j + 1], [i + 1, j]]].forEach(corners => {
+                            const src = corners.map(c => at(c[0], c[1]));
+                            if (src.some(p => !p)) return;
+                            const srcPx = src.map(p => [p[0] * width, p[1] * width]);
+                            const dest = corners.map(c => [c[0] * cell, c[1] * cell]);
+                            const colFrom = Math.max(0, Math.floor(Math.min(srcPx[0][0], srcPx[1][0], srcPx[2][0]) / slider.tile));
+                            const colTo = Math.min(lastTile, Math.floor(Math.max(srcPx[0][0], srcPx[1][0], srcPx[2][0]) / slider.tile));
+                            const rowFrom = Math.max(0, Math.floor(Math.min(srcPx[0][1], srcPx[1][1], srcPx[2][1]) / slider.tile));
+                            const rowTo = Math.min(lastTile, Math.floor(Math.max(srcPx[0][1], srcPx[1][1], srcPx[2][1]) / slider.tile));
+                            const tiles = [];
+                            for (let row = rowFrom; row <= rowTo; row++) {
+                                for (let col = colFrom; col <= colTo; col++) {
+                                    const key = row + '_' + col;
+                                    if (!needed.has(key)) needed.set(key, loadSliderTile(source, zoom, row, col));
+                                    tiles.push([key, row, col]);
+                                }
+                            }
+                            triangles.push({ dest: dest, src: srcPx, tiles: tiles });
+                        });
+                    }
+                }
+
+                const images = new Map();
+                await Promise.all([...needed].map(async ([key, promise]) => images.set(key, await promise)));
+
+                const ctx = canvas.getContext('2d');
+                triangles.forEach(t => {
+                    const [d0, d1, d2] = t.dest;
+                    // Grow the triangle a touch so neighbours overlap and no seams show
+                    const cx = (d0[0] + d1[0] + d2[0]) / 3, cy = (d0[1] + d1[1] + d2[1]) / 3;
+                    const grow = p => {
+                        const dx = p[0] - cx, dy = p[1] - cy, len = Math.hypot(dx, dy) || 1;
+                        return [p[0] + dx / len * 1.5, p[1] + dy / len * 1.5];
+                    };
+                    const g0 = grow(d0), g1 = grow(d1), g2 = grow(d2);
+                    t.tiles.forEach(([key, row, col]) => {
+                        const img = images.get(key);
+                        if (!img) return;
+                        // The stretch that carries this satellite tile's pixels onto the triangle
+                        const s = t.src.map(p => [p[0] - col * slider.tile, p[1] - row * slider.tile]);
+                        const det = (s[1][0] - s[0][0]) * (s[2][1] - s[0][1]) - (s[2][0] - s[0][0]) * (s[1][1] - s[0][1]);
+                        if (Math.abs(det) < 1e-9) return;
+                        const a = ((d1[0] - d0[0]) * (s[2][1] - s[0][1]) - (d2[0] - d0[0]) * (s[1][1] - s[0][1])) / det;
+                        const c = ((d2[0] - d0[0]) * (s[1][0] - s[0][0]) - (d1[0] - d0[0]) * (s[2][0] - s[0][0])) / det;
+                        const b = ((d1[1] - d0[1]) * (s[2][1] - s[0][1]) - (d2[1] - d0[1]) * (s[1][1] - s[0][1])) / det;
+                        const d = ((d2[1] - d0[1]) * (s[1][0] - s[0][0]) - (d1[1] - d0[1]) * (s[2][0] - s[0][0])) / det;
+                        ctx.save();
+                        ctx.beginPath();
+                        ctx.moveTo(g0[0], g0[1]);
+                        ctx.lineTo(g1[0], g1[1]);
+                        ctx.lineTo(g2[0], g2[1]);
+                        ctx.closePath();
+                        ctx.clip();
+                        ctx.setTransform(a, b, c, d, d0[0] - a * s[0][0] - c * s[0][1], d0[1] - b * s[0][0] - d * s[0][1]);
+                        ctx.drawImage(img, 0, 0);
+                        ctx.restore();
+                    });
+                });
+            }
+        });
 
         // Boundary lines on their own, drawn over the satellite imagery
         L.BoundaryLayer = L.Layer.extend({
@@ -3797,7 +3991,7 @@ function calculateFeelsLike(tempC, windKt, rh) {
         return `${GIBS_URL}/${source.gibs}/default/${source.time || 'default'}/${source.matrix}/{z}/{y}/{x}.png`;
     }
 
-    // The time of the newest image a source has, or null if that could not be found out
+    // The time of the newest image a fallback source has, or null if that could not be found out
     async function latestSatelliteTime(source) {
         try {
             if (source.wms) {
@@ -3819,21 +4013,105 @@ function calculateFeelsLike(tempC, windKt, rh) {
         return null;
     }
 
-    // Moves every sector on to its newest image. Runs when the imagery is turned on and
-    // every few minutes after that.
+    // The imagery servers occasionally fail a tile; ask for it again a couple of times
+    function retrySatelliteTile(event) {
+        const tile = event.tile;
+        if (!tile || tile.tagName !== 'IMG') return;
+        tile._retries = (tile._retries || 0) + 1;
+        if (tile._retries > 3) return;
+        const url = tile.src.replace(/[?&]retry=\d+$/, '');
+        setTimeout(() => {
+            tile.src = url + (url.includes('?') ? '&' : '?') + 'retry=' + tile._retries;
+        }, 1500 * tile._retries);
+    }
+
+    // Builds the map layer for one sector, from SLIDER or from its fallback source
+    function makeSatelliteLayer(source, useSlider) {
+        let layer;
+        if (useSlider) {
+            layer = new L.GeostationaryLayer({
+                pane: 'satellitePane', source: source, maxNativeZoom: source.slider.mapMaxZoom, maxZoom: 20,
+                keepBuffer: 1, updateWhenZooming: false,
+                attribution: 'Imagery: CIRA SLIDER (NOAA, JMA, EUMETSAT)'
+            });
+        } else {
+            // Sharp-screen devices get tiles from one zoom level deeper, shown at half size, so the
+            // imagery is as crisp as the source allows. Each source's maxNativeZoom is the finest
+            // detail it publishes; closer in than that, the image is enlarged.
+            const options = { pane: 'satellitePane', source: source, maxNativeZoom: source.maxNativeZoom, maxZoom: 20, detectRetina: true };
+            if (source.wms) {
+                options.attribution = 'Imagery &copy; EUMETSAT';
+                layer = new L.SatelliteWMS(`${EUMETSAT_URL}/wms`, Object.assign(options, {
+                    layers: source.wms, format: 'image/png', transparent: true, version: '1.3.0'
+                }));
+            } else {
+                options.attribution = 'Imagery: NASA GIBS (NOAA, JMA)';
+                // Leaflet asks for one level deeper on sharp screens, so stay within what exists
+                if (L.Browser.retina) options.maxNativeZoom = source.maxNativeZoom - 1;
+                layer = new L.SatelliteTiles(satelliteTileUrl(source), options);
+            }
+            layer.on('tileerror', retrySatelliteTile);
+        }
+        layer._usesSlider = useSlider;
+        return layer;
+    }
+
+    // Moves every sector on to its newest image, creating or swapping its layer as needed.
+    // Runs when the imagery is turned on and every few minutes after that.
     async function refreshSatelliteTimes() {
+        let sliderTimes = null;
+        try {
+            const res = await fetch(`${SATELLITE_TIMES_URL}?cb=${Date.now()}`, { cache: 'no-store' });
+            if (res.ok) sliderTimes = await res.json();
+        } catch (e) {}
+
         await Promise.all(SATELLITE_SOURCES.map(async source => {
-            const time = await latestSatelliteTime(source);
-            const layer = satelliteLayers && satelliteLayers.get(source);
-            if (!layer) return; // turned off in the meantime
-            if (!time) {
-                // Time unknown: the service's "latest" image is being shown, so just reload it
-                if (source.wms) layer.setParams({ refreshed: Date.now() });
-                else layer.redraw();
-            } else if (time !== source.time) {
-                source.time = time;
-                if (source.wms) layer.setParams({ time: time });
-                else layer.setUrl(satelliteTileUrl(source));
+            // SLIDER is used when it has an image for this satellite that is recent enough
+            let times = source.slider && sliderTimes ? sliderTimes[source.slider.sat] : null;
+            if (times && times.length) {
+                const t = times[0];
+                const taken = Date.UTC(+t.slice(0, 4), +t.slice(4, 6) - 1, +t.slice(6, 8), +t.slice(8, 10), +t.slice(10, 12));
+                if (_nowAccurate() - taken > SLIDER_MAX_AGE_MINUTES * 60000) times = null;
+            } else {
+                times = null;
+            }
+            const fallbackTime = times ? null : await latestSatelliteTime(source);
+            if (!satelliteLayers) return; // turned off in the meantime
+
+            let layer = satelliteLayers.get(source);
+            if (!layer || layer._usesSlider !== !!times) {
+                if (layer) mapInstance.removeLayer(layer);
+                source.time = null;
+                source.sliderTimes = null;
+                layer = makeSatelliteLayer(source, !!times);
+                satelliteLayers.set(source, layer);
+                if (times) source.sliderTimes = times; // needed before the first tiles are drawn
+                if (times) layer._drawnTime = times[0];
+                layer.addTo(mapInstance);
+            }
+
+            if (times) {
+                source.sliderTimes = times;
+                source.time = times[0];
+                source.timeLabel = `${times[0].slice(8, 10)}:${times[0].slice(10, 12)}Z`;
+                source.shownName = source.name;
+                if (layer._drawnTime !== times[0]) {
+                    layer._drawnTime = times[0];
+                    layer.redraw(); // a newer image has arrived
+                }
+            } else {
+                source.shownName = source.fallbackName || source.name;
+                if (!fallbackTime) {
+                    // Time unknown: the service's "latest" image is being shown, so just reload it
+                    source.timeLabel = 'latest';
+                    if (source.wms) layer.setParams({ refreshed: Date.now() });
+                    else layer.redraw();
+                } else if (fallbackTime !== source.time) {
+                    source.time = fallbackTime;
+                    source.timeLabel = fallbackTime.slice(11, 16) + 'Z';
+                    if (source.wms) layer.setParams({ time: fallbackTime });
+                    else layer.setUrl(satelliteTileUrl(source));
+                }
             }
         }));
         updateSatelliteInfo();
@@ -3850,21 +4128,8 @@ function calculateFeelsLike(tempC, windKt, rh) {
         let lng = mapInstance.getCenter().lng;
         lng = ((((lng + 180) % 360) + 360) % 360) - 180;
         const source = SATELLITE_SOURCES.find(s => s.west < s.east ? (lng >= s.west && lng < s.east) : (lng >= s.west || lng < s.east));
-        const time = source && source.time ? source.time.slice(11, 16) + 'Z' : 'latest';
-        info.textContent = `Satellite: ${time} · ${source ? source.name : ''}`;
+        info.textContent = source && source.timeLabel ? `Satellite: ${source.timeLabel} · ${source.shownName}` : 'Satellite: loading…';
         info.style.display = 'block';
-    }
-
-    // The imagery servers occasionally fail a tile; ask for it again a couple of times
-    function retrySatelliteTile(event) {
-        const tile = event.tile;
-        if (!tile || tile.tagName !== 'IMG') return;
-        tile._retries = (tile._retries || 0) + 1;
-        if (tile._retries > 3) return;
-        const url = tile.src.replace(/[?&]retry=\d+$/, '');
-        setTimeout(() => {
-            tile.src = url + (url.includes('?') ? '&' : '?') + 'retry=' + tile._retries;
-        }, 1500 * tile._retries);
     }
 
     function toggleSatellite() {
@@ -3887,30 +4152,10 @@ function calculateFeelsLike(tempC, windKt, rh) {
             pane.style.pointerEvents = 'none';
 
             satelliteLayers = new Map();
-            SATELLITE_SOURCES.forEach(source => {
-                source.time = null;
-                // Sharp-screen devices get tiles from one zoom level deeper, shown at half size, so the
-                // imagery is as crisp as the source allows. Each source's maxNativeZoom is the finest
-                // detail it publishes; closer in than that, the image is enlarged.
-                const options = { pane: 'satellitePane', source: source, maxNativeZoom: source.maxNativeZoom, maxZoom: 20, detectRetina: true };
-                let layer;
-                if (source.wms) {
-                    options.attribution = 'Imagery &copy; EUMETSAT';
-                    layer = new L.SatelliteWMS(`${EUMETSAT_URL}/wms`, Object.assign(options, {
-                        layers: source.wms, format: 'image/png', transparent: true, version: '1.3.0'
-                    }));
-                } else {
-                    options.attribution = 'Imagery: NASA GIBS (NOAA, JMA)';
-                    // Leaflet asks for one level deeper on sharp screens, so stay within what exists
-                    if (L.Browser.retina) options.maxNativeZoom = source.maxNativeZoom - 1;
-                    layer = new L.SatelliteTiles(satelliteTileUrl(source), options);
-                }
-                layer.on('tileerror', retrySatelliteTile);
-                satelliteLayers.set(source, layer.addTo(mapInstance));
-            });
+            SATELLITE_SOURCES.forEach(source => { source.time = null; source.timeLabel = null; });
             satelliteBoundaryLayer = new L.BoundaryLayer().addTo(mapInstance);
             mapInstance.on('moveend', updateSatelliteInfo);
-            refreshSatelliteTimes();
+            refreshSatelliteTimes(); // creates each sector's layer once its image time is known
             satelliteRefreshInterval = setInterval(refreshSatelliteTimes, 5 * 60 * 1000);
             btn.classList.add('satellite-active');
         }
