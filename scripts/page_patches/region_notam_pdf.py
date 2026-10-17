@@ -41,8 +41,14 @@ i = find('// The NOTAMs of the report\'s airports that were chosen for the PDF: 
 d = indent(i)
 block = r'''// ── NOTAMs for a whole country, or a US state, as one PDF ──────
 // Every airport the page knows in that country (or state) is looked up, using each of the
-// published NOTAM files only once. Limited so the PDF stays within reason: about 300 pages.
-const REGION_NOTAM_LIMIT = 3500;
+// published NOTAM files only once. Limited so the PDF stays within reason: about 300 pages
+// for a country or state. Europe as a whole (about 400 pages) and the whole USA (about
+// 2,000 pages, offered with a warning) have their own limits.
+const REGION_NOTAM_LIMITS = { region: 3500, EUROPE: 15000, US: 50000 };
+// Europe for this purpose: the European countries, with the UK, Turkey, Ukraine and the
+// Caucasus; Russia, which reaches far into Asia, is left to its own country PDF
+const EUROPE_COUNTRIES = new Set(('AL AD AM AT AZ BY BE BA BG HR CY CZ DK EE FI FR GE DE GI GR HU IS IE IT XK LV LI LT ' +
+    'LU MT MD MC ME NL MK NO PL PT RO SM RS SK SI ES SE CH TR UA GB FO GL IM JE GG AX SJ VA').split(' '));
 const US_STATE_NAMES = { AL: 'Alabama', AK: 'Alaska', AZ: 'Arizona', AR: 'Arkansas', CA: 'California', CO: 'Colorado',
     CT: 'Connecticut', DE: 'Delaware', DC: 'District of Columbia', FL: 'Florida', GA: 'Georgia', HI: 'Hawaii', ID: 'Idaho',
     IL: 'Illinois', IN: 'Indiana', IA: 'Iowa', KS: 'Kansas', KY: 'Kentucky', LA: 'Louisiana', ME: 'Maine', MD: 'Maryland',
@@ -68,19 +74,36 @@ function airportNotamRegionButton(icao) {
     const region = airportRegion(icao);
     if (!region) return '';
     const esc = text => String(text).replace(/[&<>"']/g, ch => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[ch]));
-    return `<button type="button" class="mt-3 w-full text-xs font-bold py-2 px-3 rounded-lg bg-black/30 hover:bg-black/40"
-        onclick="makeRegionNotamPdf(this, '${esc(region.country)}', '${esc(region.state || '')}')">PDF of all airport NOTAMs in ${esc(region.name)}</button>`;
+    const button = (country, state, label) => `<button type="button" class="mt-2 w-full text-xs font-bold py-2 px-3 rounded-lg bg-black/30 hover:bg-black/40"
+        onclick="makeRegionNotamPdf(this, '${esc(country)}', '${esc(state)}')">PDF of all airport NOTAMs in ${esc(label)}</button>`;
+    let html = '<div class="mt-2">' + button(region.country, region.state || '', region.name);
+    if (region.country === 'US') html += button('US', '', 'the whole USA');
+    else if (EUROPE_COUNTRIES.has(region.country)) html += button('EUROPE', '', 'Europe');
+    return html + '</div>';
 }
 
 async function makeRegionNotamPdf(button, country, state) {
-    const original = button.textContent;
+    const original = button.dataset.label || button.textContent;
+    button.dataset.label = original;
     const say = text => { button.textContent = text; };
+    // The whole USA makes a very large PDF: the first tap only says so, a second tap goes ahead
+    if (country === 'US' && !state && button.dataset.confirmed !== 'yes') {
+        button.dataset.confirmed = 'yes';
+        say('About 2,000 pages: slow, and may fail on a phone. Tap again to make it.');
+        setTimeout(() => { if (!button.disabled) { delete button.dataset.confirmed; say(original); } }, 8000);
+        return;
+    }
+    delete button.dataset.confirmed;
     button.disabled = true;
     try {
+        const scope = country === 'EUROPE' ? 'EUROPE' : (country === 'US' && !state ? 'US' : 'region');
         let region = state ? (US_STATE_NAMES[state] || state) : country;
-        if (!state) { try { region = new Intl.DisplayNames(['en'], { type: 'region' }).of(country) || country; } catch (e) {} }
+        if (scope === 'EUROPE') region = 'Europe';
+        else if (scope === 'US') region = 'the USA';
+        else { try { region = new Intl.DisplayNames(['en'], { type: 'region' }).of(country) || country; } catch (e) {} }
         const airports = [...cachedStationMap.entries()]
-            .filter(([, s]) => s.country === country && (!state || s.state === state)).map(([id]) => id).sort();
+            .filter(([, s]) => scope === 'EUROPE' ? EUROPE_COUNTRIES.has(s.country) : (s.country === country && (!state || s.state === state)))
+            .map(([id]) => id).sort();
         say(`Loading NOTAMs for ${airports.length} airports…`);
         // Which file holds each airport, and each file fetched once
         const join = (a, b) => { const out = new Uint8Array(a.length + b.length); out.set(a); out.set(b, a.length); return out; };
@@ -115,8 +138,9 @@ async function makeRegionNotamPdf(button, country, state) {
             const notams = sortAirportNotams(currentAirportNotams(JSON.parse(pako.inflate(packed, { to: 'string' }))));
             if (notams.length) { found.push({ icao, notams }); total += notams.length; }
         }
-        if (total > REGION_NOTAM_LIMIT) {
-            say(`Too many for one PDF: ${total.toLocaleString()} NOTAMs in ${region} (limit ${REGION_NOTAM_LIMIT.toLocaleString()})`);
+        const limit = REGION_NOTAM_LIMITS[scope];
+        if (total > limit) {
+            say(`Too many for one PDF: ${total.toLocaleString()} NOTAMs in ${region} (limit ${limit.toLocaleString()})`);
             setTimeout(() => { say(original); button.disabled = false; }, 6000);
             return;
         }
@@ -129,8 +153,20 @@ async function makeRegionNotamPdf(button, country, state) {
         await new Promise(r => setTimeout(r, 30));   // let the message show before the heavy work
         const { jsPDF } = window.jspdf;
         const doc = new jsPDF({ orientation: 'portrait', unit: 'mm', format: 'a4' });
-        drawPdfNotams(doc, { airports: found, status: status }, `NOTAMs: ${region}`);
-        const file = region.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
+        // Drawn an airport at a time with pauses, so the page stays responsive and shows progress
+        const steps = drawPdfNotamsSteps(doc, { airports: found, status: status }, `NOTAMs: ${region.replace(/^the /, '')}`);
+        let done = 0, lastPause = performance.now();
+        while (!steps.next().done) {
+            done++;
+            if (performance.now() - lastPause > 120) {
+                say(`Making the PDF… ${Math.round(done / found.length * 100)}% (${doc.getNumberOfPages()} pages)`);
+                await new Promise(r => setTimeout(r, 0));
+                lastPause = performance.now();
+            }
+        }
+        say('Opening the PDF…');
+        await new Promise(r => setTimeout(r, 30));
+        const file = region.replace(/^the /, '').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
         showPdfPreview(doc, `notams-${file}.pdf`);
         say(original);
         button.disabled = false;
@@ -143,5 +179,22 @@ async function makeRegionNotamPdf(button, country, state) {
 
 '''.split('\n')
 lines[i:i] = [(d + l) if l else '' for l in block]
+
+# 5. drawPdfNotams in steps, one airport at a time
+i = find('function drawPdfNotams(doc, pdfNotams, title) {')
+d = indent(i)
+lines[i] = d + 'function* drawPdfNotamsSteps(doc, pdfNotams, title) {'
+j = find('for (const airport of pdfNotams.airports) {', i)
+lines[j + 1:j + 1] = [indent(j) + '    yield;   // one step per airport (see makeRegionNotamPdf)']
+k = j
+while lines[k] != d + '}':
+    k += 1
+lines[k + 1:k + 1] = ['', d + '// All the steps at once, for the PDF report',
+                      d + 'function drawPdfNotams(doc, pdfNotams, title) {',
+                      d + '    const steps = drawPdfNotamsSteps(doc, pdfNotams, title);',
+                      d + '    let step;',
+                      d + '    do { step = steps.next(); } while (!step.done);',
+                      d + '    return step.value;',
+                      d + '}']
 open(path, 'w', encoding='utf-8').write('\n'.join(lines))
 print('patched', path)
