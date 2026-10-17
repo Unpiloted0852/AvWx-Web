@@ -1773,15 +1773,19 @@ html.dark #customDashboardView .dark\:bg-black\/50 { background-color: var(--bg-
 .bc-row { display: flex !important; gap: .4rem !important; flex: 1 1 22rem; min-width: 0; margin: 0 !important; }
 .bc-row > .bc-field:first-child { flex: 1; min-width: 0; }
 .bc-row > .bc-field:last-child { flex: 0 0 auto; }
-/* minimum runway: a permanent label joined to a box wide enough for 10000 */
-.bc-rwy-row { display: flex; align-items: stretch; height: 2.35rem; border-radius: 9px; overflow: hidden;
-  border: 1px solid var(--border); background: var(--bg-input); }
-.bc-rwy-row:focus-within { border-color: var(--accent); }
-.bc-rwy-row .bc-rwy-label { display: flex !important; align-items: center; padding: 0 .55rem; margin: 0 !important;
-  font: 700 .6rem/1.1 'IBM Plex Mono', monospace !important; letter-spacing: .06em; text-transform: uppercase;
-  color: var(--text-3); border-right: 1px solid var(--border); white-space: nowrap; }
-.bc-rwy-row input.bc-num { width: 4.4rem !important; height: 100% !important; border: 0 !important; border-radius: 0 !important;
-  background: transparent !important; text-align: center; }
+/* minimum runway: a plain caption beside a typing box like the airport box (wide enough
+   for 10000), with the unit inside it, so the caption does not look like a button */
+.bc-rwy-row { display: flex; align-items: center; gap: .4rem; height: 2.35rem; }
+.bc-rwy-row .bc-rwy-label { display: block !important; margin: 0 !important; cursor: default;
+  font: 600 .58rem/1.15 'IBM Plex Mono', monospace !important; letter-spacing: .06em; text-transform: uppercase;
+  color: var(--text-3); text-align: right; white-space: nowrap; }
+.bc-rwy-box { display: flex; align-items: center; height: 2.35rem; border-radius: 9px; cursor: text;
+  border: 1px solid var(--border); background: var(--bg-input); padding-right: .5rem;
+  transition: border-color var(--transition), box-shadow var(--transition); }
+.bc-rwy-box:focus-within { border-color: var(--accent); box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 22%, transparent); }
+.bc-rwy-box input.bc-num { width: 3.9rem !important; height: 100% !important; border: 0 !important; border-radius: 0 !important;
+  background: transparent !important; box-shadow: none !important; text-align: right; padding: 0 .3rem 0 .5rem !important; }
+.bc-rwy-unit { font: 600 .72rem/1 'IBM Plex Mono', monospace; color: var(--text-3); }
 .bc-icao-row, input.bc-num { height: 2.35rem !important; border-radius: 9px !important; }
 #icaoInput { font-size: 1.05rem !important; letter-spacing: .14em !important; padding: 0 .7rem !important; }
 .bc-or { display: none !important; }
@@ -12895,8 +12899,15 @@ startAutoRefresh();
         const label = document.createElement('label');
         label.className = 'bc-rwy-label';
         label.htmlFor = 'minRunway';
-        label.textContent = 'Min rwy ft';
-        group.append(label, rwy);
+        label.innerHTML = 'Min<br>rwy';
+        const box = document.createElement('div');
+        box.className = 'bc-rwy-box';
+        const unit = document.createElement('span');
+        unit.className = 'bc-rwy-unit';
+        unit.textContent = 'ft';
+        box.append(rwy, unit);
+        box.addEventListener('click', () => rwy.focus());
+        group.append(label, box);
         field.appendChild(group);
     }
     // The inputs start just below the lowest of the Zulu clock and the icon buttons,
