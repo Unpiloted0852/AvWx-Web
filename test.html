@@ -1786,6 +1786,10 @@ html.dark #customDashboardView .dark\:bg-black\/50 { background-color: var(--bg-
 .bc-rwy-box input.bc-num { width: 3.9rem !important; height: 100% !important; border: 0 !important; border-radius: 0 !important;
   background: transparent !important; box-shadow: none !important; text-align: right; padding: 0 .3rem 0 .5rem !important; }
 .bc-rwy-unit { font: 600 .72rem/1 'IBM Plex Mono', monospace; color: var(--text-3); }
+/* no up/down arrows in the box: on desktop browsers they covered the digits */
+.bc-rwy-box input.bc-num { -moz-appearance: textfield; appearance: textfield; }
+.bc-rwy-box input.bc-num::-webkit-inner-spin-button,
+.bc-rwy-box input.bc-num::-webkit-outer-spin-button { -webkit-appearance: none; appearance: none; margin: 0; }
 .bc-icao-row, input.bc-num { height: 2.35rem !important; border-radius: 9px !important; }
 #icaoInput { font-size: 1.05rem !important; letter-spacing: .14em !important; padding: 0 .7rem !important; }
 .bc-or { display: none !important; }
@@ -12893,6 +12897,7 @@ startAutoRefresh();
     const rwy = document.getElementById('minRunway');
     if (rwy) {
         rwy.title = 'Minimum runway length (ft)';
+        rwy.inputMode = 'numeric';   // a number keypad on phones
         const field = rwy.closest('.bc-field');
         const group = document.createElement('div');
         group.className = 'bc-rwy-row';
