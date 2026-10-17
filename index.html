@@ -1753,6 +1753,78 @@ html.dark #customDashboardView .dark\:bg-black\/50 { background-color: var(--bg-
   *, *::before, *::after { transition-duration: 0s !important; animation-duration: 0s !important; }
 }
 </style>
+<style id="compactHeaderMock">
+/* ── Slim header ───────────────────────────────────────────────────────────
+   Everything above the map in as few short rows as possible, nothing overlapping.
+   The introduction and notice live below the results at every screen size. */
+.bc-inputs { padding-top: 0 !important; margin-top: 0 !important; padding-bottom: .35rem !important; }
+.bc-hero { padding-top: 2.9rem !important; margin-bottom: .4rem !important; }
+.bc-hero-grid, .bc-kicker, .bc-hero .bc-sub, .bc-hero .bc-notice { display: none !important; }
+.bc-hero-inner { display: flex !important; align-items: center; gap: .6rem; text-align: left !important; }
+.bc-title { font-size: 1rem !important; margin: 0 !important; line-height: 1.2 !important; white-space: nowrap; }
+.bc-footnote { display: block !important; margin: .6rem .25rem 0; color: var(--text-3); font-size: .72rem; line-height: 1.45; }
+.bc-footnote p { margin: 0 0 .3rem; }
+
+/* the input card: one or two short rows, labels inside the boxes */
+.bc-console { margin: 0 auto .4rem !important; border-radius: 12px !important; max-width: none !important; }
+.bc-console::before { display: none; }
+.bc-console-body { padding: .45rem !important; display: flex; flex-wrap: wrap; gap: .4rem; align-items: center; }
+.bc-field label { display: none !important; }
+.bc-row { display: flex !important; gap: .4rem !important; flex: 1 1 22rem; min-width: 0; margin: 0 !important; }
+.bc-row > .bc-field:first-child { flex: 1; min-width: 0; }
+.bc-row > .bc-field:last-child { flex: 0 0 auto; }
+/* minimum runway: a permanent label joined to a box wide enough for 10000 */
+.bc-rwy-row { display: flex; align-items: stretch; height: 2.35rem; border-radius: 9px; overflow: hidden;
+  border: 1px solid var(--border); background: var(--bg-input); }
+.bc-rwy-row:focus-within { border-color: var(--accent); }
+.bc-rwy-row .bc-rwy-label { display: flex !important; align-items: center; padding: 0 .55rem; margin: 0 !important;
+  font: 700 .6rem/1.1 'IBM Plex Mono', monospace !important; letter-spacing: .06em; text-transform: uppercase;
+  color: var(--text-3); border-right: 1px solid var(--border); white-space: nowrap; }
+.bc-rwy-row input.bc-num { width: 4.4rem !important; height: 100% !important; border: 0 !important; border-radius: 0 !important;
+  background: transparent !important; text-align: center; }
+.bc-icao-row, input.bc-num { height: 2.35rem !important; border-radius: 9px !important; }
+#icaoInput { font-size: 1.05rem !important; letter-spacing: .14em !important; padding: 0 .7rem !important; }
+.bc-or { display: none !important; }
+#gpsHomeBtn { padding: 0 .8rem !important; font-size: .66rem !important; }
+input.bc-num { font-size: .9rem !important; padding: 0 .35rem !important; }
+.bc-actions { display: flex !important; flex-direction: row !important; align-items: center !important; gap: .4rem !important;
+  margin: 0 !important; padding: 0 !important; border: 0 !important; flex: 1 1 16rem; }
+#toggleAdvanced { padding: 0 .75rem !important; height: 2.35rem; font-size: .62rem !important; white-space: nowrap; }
+#generateButton { height: 2.35rem !important; min-height: 0 !important; padding: 0 1.1rem !important; margin: 0 !important;
+  flex: 1 1 auto; width: auto !important; min-width: 4.5rem !important; border-radius: 9px !important; font-size: .85rem !important; }
+#legendDropdownContainer { margin: 0 !important; flex: none; }
+#legendDropdownContainer > button { margin: 0 !important; height: 2.35rem; padding: 0 .75rem !important; }
+#legendDropdownMenu { left: auto !important; right: 0 !important; transform: none !important; }
+#advancedInputs { flex: 1 1 100%; margin-top: .3rem !important; padding-top: .6rem !important; }
+
+/* Map / List / PDF: a thinner row */
+#resultsContainer { padding: .4rem !important; }
+#resultsContainer > div:first-child { margin-bottom: .4rem !important; }
+#resultsContainer .tab-button { padding-top: .35rem !important; padding-bottom: .35rem !important; font-size: .8rem !important; }
+#resultsContainer > div:first-child > div:first-child { padding: 2px !important; }
+#downloadPdfBtn { padding-top: .4rem !important; padding-bottom: .4rem !important; }
+
+@media (max-width: 639px) {
+  /* the Zulu clock and the icon buttons already fill the top line: no title row;
+     the inputs start just below them */
+  .bc-hero { padding-top: 0 !important; margin-bottom: 0 !important; height: var(--bc-top-clear, 3.6rem); overflow: visible; }
+  .bc-title { display: none !important; }
+  .bc-row { flex-basis: 100%; }
+}
+@media (max-width: 380px) {
+  /* the smallest phones: the second row's buttons shrink so Go still fits */
+  .bc-actions { min-width: 0; }
+  #toggleAdvanced { flex: 1 1 auto; min-width: 0; padding: 0 .45rem !important; font-size: .56rem !important; white-space: normal; line-height: 1.15 !important; text-align: left; }
+  #legendDropdownContainer > button { padding: 0 .5rem !important; }
+  #generateButton { flex: 0 0 auto; min-width: 3.6rem !important; padding: 0 .8rem !important; }
+}
+@media (min-width: 640px) {
+  /* on wider screens the title sits on the same line as the icon buttons, and the
+     inputs start below whichever of them reaches lowest */
+  .bc-hero { padding-top: 0 !important; height: var(--bc-top-clear, 4.4rem); display: flex; align-items: center; }
+  .bc-hero-inner { width: 100%; padding-left: 7rem; padding-right: 17rem; }
+}
+</style>
 </head>
 
 <body class="min-h-full antialiased transition-colors duration-300 overflow-x-hidden" style="background-color:var(--bg);color:var(--text-1)">
@@ -12657,6 +12729,43 @@ function updateLegendText() {
 // Start the 1-minute timer immediately on load
 startAutoRefresh();
 
+</script>
+<script id="compactHeaderMockScript">
+// Slim header: the legend button joins the Go button's row
+(function() {
+    const legend = document.getElementById('legendDropdownContainer');
+    const actions = document.querySelector('.bc-actions');
+    const go = document.getElementById('generateButton');
+    if (legend && actions && go) actions.insertBefore(legend, go);
+    // With the labels gone, the boxes say what they are for
+    const rwy = document.getElementById('minRunway');
+    if (rwy) {
+        rwy.title = 'Minimum runway length (ft)';
+        const field = rwy.closest('.bc-field');
+        const group = document.createElement('div');
+        group.className = 'bc-rwy-row';
+        const label = document.createElement('label');
+        label.className = 'bc-rwy-label';
+        label.htmlFor = 'minRunway';
+        label.textContent = 'Min rwy ft';
+        group.append(label, rwy);
+        field.appendChild(group);
+    }
+    // The inputs start just below the lowest of the Zulu clock and the icon buttons,
+    // so nothing overlaps whatever their size on this screen
+    const clear = () => {
+        const inputs = document.querySelector('.bc-inputs');
+        if (!inputs) return;
+        const top = inputs.getBoundingClientRect().top;
+        const lowest = ['#zuluClock', '.bc-cluster'].map(sel => document.querySelector(sel))
+            .filter(Boolean).map(el => el.getBoundingClientRect().bottom - top);
+        document.documentElement.style.setProperty('--bc-top-clear', Math.ceil(Math.max(0, ...lowest) + 8) + 'px');
+    };
+    clear();
+    window.addEventListener('resize', clear);
+    const icao = document.getElementById('icaoInput');
+    if (icao) icao.title = 'Home airport (ICAO)';
+})();
 </script>
 </body>
 </html>

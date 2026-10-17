@@ -1754,9 +1754,9 @@ html.dark #customDashboardView .dark\:bg-black\/50 { background-color: var(--bg-
 }
 </style>
 <style id="compactHeaderMock">
-/* ── MOCK-UP: slim header (test page only) ─────────────────────────────────
-   Everything above the map squeezed into as few short rows as possible. The
-   introduction and notice live below the results at every screen size. */
+/* ── Slim header ───────────────────────────────────────────────────────────
+   Everything above the map in as few short rows as possible, nothing overlapping.
+   The introduction and notice live below the results at every screen size. */
 .bc-inputs { padding-top: 0 !important; margin-top: 0 !important; padding-bottom: .35rem !important; }
 .bc-hero { padding-top: 2.9rem !important; margin-bottom: .4rem !important; }
 .bc-hero-grid, .bc-kicker, .bc-hero .bc-sub, .bc-hero .bc-notice { display: none !important; }
@@ -12731,7 +12731,7 @@ startAutoRefresh();
 
 </script>
 <script id="compactHeaderMockScript">
-// MOCK-UP: the legend button joins the Go button's row
+// Slim header: the legend button joins the Go button's row
 (function() {
     const legend = document.getElementById('legendDropdownContainer');
     const actions = document.querySelector('.bc-actions');
