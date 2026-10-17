@@ -7899,7 +7899,7 @@ function calculateTempFAndRH(metarNode) {
                     else if (state) label += `, ${state}`;
 
                     // Store elevationFt in the map
-                    map.set(id, { name: label, latitude: isNaN(lat) ? null : lat, longitude: isNaN(lon) ? null : lon, elevationFt: elevFt });
+                    map.set(id, { name: label, latitude: isNaN(lat) ? null : lat, longitude: isNaN(lon) ? null : lon, elevationFt: elevFt, country: country || '', state: state || '' });
                 }
             });
             cachedStationMap = map;
@@ -10978,7 +10978,7 @@ function renderAirportNotams(view) {
     if (header) header.innerHTML = `NOTAMs${notams.length ? ` (${notams.length})` : ''} <span class="font-normal normal-case tracking-normal opacity-40 text-[9px]">${asOfText}</span>`;
     const footer = `<p class="mt-3 text-[10px] opacity-50">In force now or starting within three days, from the FAA NOTAM system. Updates every few minutes while open. May be incomplete: check official sources before flight.</p>`;
     if (notams.length === 0) {
-        content.innerHTML = `<p class="text-xs opacity-60">No NOTAMs on file for ${esc(icao)}.</p>` + footer;
+        content.innerHTML = `<p class="text-xs opacity-60">No NOTAMs on file for ${esc(icao)}.</p>` + airportNotamRegionButton(icao) + footer;
     } else {
         const included = pdfNotamAirports().has(icao);
         const toggle = `<label class="flex items-center gap-2 mb-2 text-xs font-bold cursor-pointer select-none">
@@ -10993,9 +10993,148 @@ function renderAirportNotams(view) {
                 <div class="mt-1 font-mono text-[13px] font-semibold leading-relaxed whitespace-pre-wrap break-words rounded-lg px-2.5 py-2" style="background:rgba(0,0,0,.72);color:#fff">${esc(text)}</div>
             </div>`;
         }).join('');
-        content.innerHTML = toggle + rows + footer;
+        content.innerHTML = toggle + rows + airportNotamRegionButton(icao) + footer;
     }
     if (scroller) scroller.scrollTop = scrollTop;
+}
+
+
+// ── NOTAMs for a whole country, or a US state, as one PDF ──────
+// Every airport the page knows in that country (or state) is looked up, using each of the
+// published NOTAM files only once. Limited so the PDF stays within reason: about 300 pages
+// for a country or state. Europe as a whole (about 400 pages) and the whole USA (about
+// 2,000 pages, offered with a warning) have their own limits.
+const REGION_NOTAM_LIMITS = { region: 3500, EUROPE: 15000, US: 50000 };
+// Europe for this purpose: the European countries, with the UK, Turkey, Ukraine and the
+// Caucasus; Russia, which reaches far into Asia, is left to its own country PDF
+const EUROPE_COUNTRIES = new Set(('AL AD AM AT AZ BY BE BA BG HR CY CZ DK EE FI FR GE DE GI GR HU IS IE IT XK LV LI LT ' +
+    'LU MT MD MC ME NL MK NO PL PT RO SM RS SK SI ES SE CH TR UA GB FO GL IM JE GG AX SJ VA').split(' '));
+const US_STATE_NAMES = { AL: 'Alabama', AK: 'Alaska', AZ: 'Arizona', AR: 'Arkansas', CA: 'California', CO: 'Colorado',
+    CT: 'Connecticut', DE: 'Delaware', DC: 'District of Columbia', FL: 'Florida', GA: 'Georgia', HI: 'Hawaii', ID: 'Idaho',
+    IL: 'Illinois', IN: 'Indiana', IA: 'Iowa', KS: 'Kansas', KY: 'Kentucky', LA: 'Louisiana', ME: 'Maine', MD: 'Maryland',
+    MA: 'Massachusetts', MI: 'Michigan', MN: 'Minnesota', MS: 'Mississippi', MO: 'Missouri', MT: 'Montana', NE: 'Nebraska',
+    NV: 'Nevada', NH: 'New Hampshire', NJ: 'New Jersey', NM: 'New Mexico', NY: 'New York', NC: 'North Carolina',
+    ND: 'North Dakota', OH: 'Ohio', OK: 'Oklahoma', OR: 'Oregon', PA: 'Pennsylvania', RI: 'Rhode Island',
+    SC: 'South Carolina', SD: 'South Dakota', TN: 'Tennessee', TX: 'Texas', UT: 'Utah', VT: 'Vermont', VA: 'Virginia',
+    WA: 'Washington', WV: 'West Virginia', WI: 'Wisconsin', WY: 'Wyoming', PR: 'Puerto Rico' };
+
+// The region an airport belongs to: its US state, or its country
+function airportRegion(icao) {
+    const station = cachedStationMap && cachedStationMap.get(icao);
+    if (!station || !station.country) return null;
+    if (station.country === 'US') {
+        return station.state ? { country: 'US', state: station.state, name: US_STATE_NAMES[station.state] || station.state } : null;
+    }
+    let name = station.country;
+    try { name = new Intl.DisplayNames(['en'], { type: 'region' }).of(station.country) || name; } catch (e) {}
+    return { country: station.country, state: null, name: name };
+}
+
+function airportNotamRegionButton(icao) {
+    const region = airportRegion(icao);
+    if (!region) return '';
+    const esc = text => String(text).replace(/[&<>"']/g, ch => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[ch]));
+    const button = (country, state, label) => `<button type="button" class="mt-2 w-full text-xs font-bold py-2 px-3 rounded-lg bg-black/30 hover:bg-black/40"
+        onclick="makeRegionNotamPdf(this, '${esc(country)}', '${esc(state)}')">PDF of all airport NOTAMs in ${esc(label)}</button>`;
+    let html = '<div class="mt-2">' + button(region.country, region.state || '', region.name);
+    if (region.country === 'US') html += button('US', '', 'the whole USA');
+    else if (EUROPE_COUNTRIES.has(region.country)) html += button('EUROPE', '', 'Europe');
+    return html + '</div>';
+}
+
+async function makeRegionNotamPdf(button, country, state) {
+    const original = button.dataset.label || button.textContent;
+    button.dataset.label = original;
+    const say = text => { button.textContent = text; };
+    // The whole USA makes a very large PDF: the first tap only says so, a second tap goes ahead
+    if (country === 'US' && !state && button.dataset.confirmed !== 'yes') {
+        button.dataset.confirmed = 'yes';
+        say('About 2,000 pages: slow, and may fail on a phone. Tap again to make it.');
+        setTimeout(() => { if (!button.disabled) { delete button.dataset.confirmed; say(original); } }, 8000);
+        return;
+    }
+    delete button.dataset.confirmed;
+    button.disabled = true;
+    try {
+        const scope = country === 'EUROPE' ? 'EUROPE' : (country === 'US' && !state ? 'US' : 'region');
+        let region = state ? (US_STATE_NAMES[state] || state) : country;
+        if (scope === 'EUROPE') region = 'Europe';
+        else if (scope === 'US') region = 'the USA';
+        else { try { region = new Intl.DisplayNames(['en'], { type: 'region' }).of(country) || country; } catch (e) {} }
+        const airports = [...cachedStationMap.entries()]
+            .filter(([, s]) => scope === 'EUROPE' ? EUROPE_COUNTRIES.has(s.country) : (s.country === country && (!state || s.state === state)))
+            .map(([id]) => id).sort();
+        say(`Loading NOTAMs for ${airports.length} airports…`);
+        // Which file holds each airport, and each file fetched once
+        const join = (a, b) => { const out = new Uint8Array(a.length + b.length); out.set(a); out.set(b, a.length); return out; };
+        const wanted = airports.map(icao => {
+            const key = sha256Bytes(new TextEncoder().encode(`${AIRPORT_NOTAMS_SALT}|${icao}`));
+            const locator = Array.from(sha256Bytes(join(new TextEncoder().encode('loc|'), key)).slice(0, 12),
+                byte => byte.toString(16).padStart(2, '0')).join('');
+            return { icao, key, locator };
+        });
+        const stamp = Date.now();
+        const status = await fetch(`${AIRPORT_NOTAMS_URL}/status.json?cb=${stamp}`, { cache: 'no-store' }).then(r => r.ok ? r.json() : null);
+        if (!status || !status.ok) throw new Error('out of date');
+        _airportNotamsStatus = status;
+        const files = {};
+        await Promise.all([...new Set(wanted.map(w => w.locator.slice(0, 2)))].map(async name => {
+            const r = await fetch(`${AIRPORT_NOTAMS_URL}/${name}.json?cb=${stamp}`, { cache: 'no-store' });
+            if (!r.ok) throw new Error(`HTTP ${r.status}`);
+            files[name] = await r.json();
+        }));
+        const found = [];
+        let total = 0;
+        for (const { icao, key, locator } of wanted) {
+            const entry = files[locator.slice(0, 2)][locator];
+            if (!entry) continue;
+            const scrambled = Uint8Array.from(atob(entry), ch => ch.charCodeAt(0));
+            const packed = new Uint8Array(scrambled.length);
+            for (let block = 0; block * 32 < scrambled.length; block++) {
+                const counter = new Uint8Array([block >>> 24, block >>> 16, block >>> 8, block]);
+                const stream = sha256Bytes(join(key, counter));
+                for (let i = block * 32; i < Math.min(scrambled.length, block * 32 + 32); i++) packed[i] = scrambled[i] ^ stream[i - block * 32];
+            }
+            const notams = sortAirportNotams(currentAirportNotams(JSON.parse(pako.inflate(packed, { to: 'string' }))));
+            if (notams.length) { found.push({ icao, notams }); total += notams.length; }
+        }
+        const limit = REGION_NOTAM_LIMITS[scope];
+        if (total > limit) {
+            say(`Too many for one PDF: ${total.toLocaleString()} NOTAMs in ${region} (limit ${limit.toLocaleString()})`);
+            setTimeout(() => { say(original); button.disabled = false; }, 6000);
+            return;
+        }
+        if (total === 0) {
+            say(`No airport NOTAMs on file in ${region}`);
+            setTimeout(() => { say(original); button.disabled = false; }, 4000);
+            return;
+        }
+        say(`Making a PDF of ${total.toLocaleString()} NOTAMs at ${found.length} airports…`);
+        await new Promise(r => setTimeout(r, 30));   // let the message show before the heavy work
+        const { jsPDF } = window.jspdf;
+        const doc = new jsPDF({ orientation: 'portrait', unit: 'mm', format: 'a4' });
+        // Drawn an airport at a time with pauses, so the page stays responsive and shows progress
+        const steps = drawPdfNotamsSteps(doc, { airports: found, status: status }, `NOTAMs: ${region.replace(/^the /, '')}`);
+        let done = 0, lastPause = performance.now();
+        while (!steps.next().done) {
+            done++;
+            if (performance.now() - lastPause > 120) {
+                say(`Making the PDF… ${Math.round(done / found.length * 100)}% (${doc.getNumberOfPages()} pages)`);
+                await new Promise(r => setTimeout(r, 0));
+                lastPause = performance.now();
+            }
+        }
+        say('Opening the PDF…');
+        await new Promise(r => setTimeout(r, 30));
+        const file = region.replace(/^the /, '').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
+        showPdfPreview(doc, `notams-${file}.pdf`);
+        say(original);
+        button.disabled = false;
+    } catch (e) {
+        console.warn('Regional NOTAM PDF failed', e);
+        say('Could not make the PDF right now. Please try again.');
+        setTimeout(() => { say(original); button.disabled = false; }, 5000);
+    }
 }
 
 
@@ -11015,18 +11154,19 @@ async function loadPdfNotams(stationsData) {
 
 // Draws the chosen airports' NOTAMs from the top of the current (first) page of the PDF
 // report; says whether there were any, so the weather can start on a fresh page after them
-function drawPdfNotams(doc, pdfNotams) {
+function* drawPdfNotamsSteps(doc, pdfNotams, title) {
     if (!pdfNotams || !pdfNotams.airports.length) return false;
     let y = PAGE_MARGIN;
     const room = needed => { if (y + needed > PAGE_HEIGHT - PAGE_MARGIN) { doc.addPage(); y = PAGE_MARGIN; } };
     const asOf = airportNotamTime((pdfNotams.status.as_of || '').slice(0, 16));
     doc.setFont("helvetica", "bold"); doc.setFontSize(14); doc.setTextColor(0, 0, 0);
-    doc.text("NOTAMs", PAGE_MARGIN, y); y += 6;
+    doc.text(title || "NOTAMs", PAGE_MARGIN, y); y += 6;
     doc.setFont("helvetica", "normal"); doc.setFontSize(8); doc.setTextColor(90, 90, 90);
     doc.splitTextToSize(`In force now or starting within three days, from the FAA NOTAM system${isNaN(asOf) ? '' : ', as of ' + new Date(asOf).toISOString().slice(0, 16).replace('T', ' ') + 'Z'}. May be incomplete: check official sources before flight.`, USABLE_WIDTH)
         .forEach(line => { doc.text(line, PAGE_MARGIN, y); y += 3.6; });
     y += 3;
     for (const airport of pdfNotams.airports) {
+        yield;   // one step per airport (see makeRegionNotamPdf)
         room(14);
         doc.setFont("helvetica", "bold"); doc.setFontSize(12); doc.setTextColor(0, 0, 0);
         const count = airport.notams ? ` (${airport.notams.length})` : '';
@@ -11059,6 +11199,14 @@ function drawPdfNotams(doc, pdfNotams) {
         y += 3;
     }
     return true;
+}
+
+// All the steps at once, for the PDF report
+function drawPdfNotams(doc, pdfNotams, title) {
+    const steps = drawPdfNotamsSteps(doc, pdfNotams, title);
+    let step;
+    do { step = steps.next(); } while (!step.done);
+    return step.value;
 }
 
 
