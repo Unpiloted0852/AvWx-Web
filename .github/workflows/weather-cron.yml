@@ -1,0 +1,97 @@
+name: Update Weather Data
+
+on:
+  # 1. Allow cron-job.org to trigger this
+  repository_dispatch:
+    types: [trigger-weather-update]
+  # 2. Internal backup timer (5 minutes)
+  schedule:
+    - cron: '*/5 * * * *'
+  # 3. Manual button
+  workflow_dispatch:
+
+jobs:
+  download-and-commit:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v3
+
+      - name: Create data directory
+        run: mkdir -p data
+
+      - name: Download Weather Files
+        run: |
+          # Core Weather Data
+          curl -L -o data/tafs.cache.xml.gz "https://aviationweather.gov/data/cache/tafs.cache.xml.gz"
+          curl -L -o data/metars.cache.xml.gz "https://aviationweather.gov/data/cache/metars.cache.xml.gz"
+          curl -L -o data/stations.cache.xml.gz "https://aviationweather.gov/data/cache/stations.cache.xml.gz"
+          curl -L -o data/aircraftreports.cache.xml.gz "https://aviationweather.gov/data/cache/aircraftreports.cache.xml.gz"
+          curl -L -o data/runways.csv "https://raw.githubusercontent.com/davidmegginson/ourairports-data/main/runways.csv"
+          
+          # Hazards / SIGMETs
+          curl -L -o data/sigmet_domestic.json "https://aviationweather.gov/api/data/sigmet?format=geojson"
+          curl -L -o data/sigmet_intl.json "https://aviationweather.gov/api/data/isigmet?format=geojson"
+
+      - name: Add TAFs missing from aviationweather.gov
+        continue-on-error: true
+        run: python3 scripts/add_extra_tafs.py
+
+      - name: Update satellite image times
+        continue-on-error: true
+        run: python3 scripts/update_satellite_times.py
+
+      - name: Update significant weather forecast
+        continue-on-error: true
+        run: python3 scripts/update_sigwx.py
+
+      # Airspace NOTAMs for the rest of the world come from a private repo, which another
+      # machine keeps up to date. Nothing from it is committed here except the outlines
+      # and times that update_airspace.py derives. Skipped when the secret is not set.
+      - name: Fetch private NOTAM extract
+        continue-on-error: true
+        env:
+          NOTAM_EXTRACT_KEY: ${{ secrets.NOTAM_EXTRACT_KEY }}
+        run: |
+          if [ -z "$NOTAM_EXTRACT_KEY" ]; then echo "No NOTAM_EXTRACT_KEY secret, skipping."; exit 0; fi
+          mkdir -p ~/.ssh
+          printf '%s\n' "$NOTAM_EXTRACT_KEY" > ~/.ssh/notam_extract
+          chmod 600 ~/.ssh/notam_extract
+          GIT_SSH_COMMAND="ssh -i ~/.ssh/notam_extract -o IdentitiesOnly=yes -o StrictHostKeyChecking=accept-new" \
+            git clone -q --depth 1 git@github.com:Unpiloted0852/AvWx-Private-Data.git "$RUNNER_TEMP/private-data"
+
+      - name: Update special use airspace
+        continue-on-error: true
+        env:
+          OPENAIP_API_KEY: ${{ secrets.OPENAIP_API_KEY }}
+          NOTAM_EXTRACT_PATH: ${{ runner.temp }}/private-data/notam_airspace.json
+        run: python3 scripts/update_airspace.py
+
+      # Each airport's NOTAMs, from the same private extract (published scrambled, one small
+      # file per group of airports). Skipped when the extract is missing.
+      - name: Update airport NOTAMs
+        continue-on-error: true
+        env:
+          NOTAM_AIRPORTS_PATH: ${{ runner.temp }}/private-data/notam_airports.json
+        run: python3 scripts/update_airport_notams.py
+
+      - name: Commit and Push
+        run: |
+          git config user.name "Weather Bot"
+          git config user.email "actions@github.com"
+          git add data/*
+          
+          # Check if there are changes to commit
+          if git diff --staged --quiet; then
+            echo "No changes to weather data. Skipping commit."
+            exit 0
+          fi
+          
+          git commit -m "Update weather data"
+          
+          # THE FIX: Pull remote changes (like your index.html edits) before pushing
+          git pull --rebase origin main
+          
+          git push
