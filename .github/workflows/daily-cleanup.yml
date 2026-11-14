@@ -1,0 +1,39 @@
+name: Daily History Purge
+
+on:
+  schedule:
+    # Run at 04:00 UTC every day
+    - cron: '0 4 * * *'
+  workflow_dispatch: # Button to run manually
+
+jobs:
+  nuclear-reset:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v3
+
+      - name: Reset History
+        run: |
+          git config --global user.name "Cleaner Bot"
+          git config --global user.email "actions@github.com"
+          
+          # 1. Create a new "orphan" branch (a branch with no parents/history)
+          git checkout --orphan latest_branch
+          
+          # 2. Add all current files (including the latest weather data)
+          git add -A
+          
+          # 3. Create a fresh commit
+          git commit -m "Daily history purge - Fresh start"
+          
+          # 4. Delete the old main branch
+          git branch -D main
+          
+          # 5. Rename our new branch to main
+          git branch -m main
+          
+          # 6. Force push the new (tiny) history to GitHub
+          git push -f origin main
